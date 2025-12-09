@@ -1,0 +1,17 @@
+.app-container {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  background: transparent;
+}
+
+.view-container {
+  width: 100%;
+  /* Reserve 80px at the bottom for the fixed Tab Selector */
+  height: calc(100vh - 80px);
+  position: relative;
+  box-sizing: border-box;
+}

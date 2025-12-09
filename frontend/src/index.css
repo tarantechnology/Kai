@@ -1,0 +1,88 @@
+:root {
+  --bg-primary: rgba(10, 10, 10, 0.6);
+  /* Translucent Black */
+  --bg-secondary: rgba(20, 20, 20, 0.4);
+  /* Glass Cards */
+  --text-primary: #FFFFFF;
+  --text-secondary: #AAAAAA;
+  --accent: #FFFFFF;
+  /* High contrast borders */
+  --border-radius-card: 0px;
+  /* SHARP */
+  --border-glass: 1px solid rgba(255, 255, 255, 0.1);
+  --font-family: 'Inter', system-ui, -apple-system, sans-serif;
+
+  font-family: var(--font-family);
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: dark;
+  color: var(--text-primary);
+
+  /* Use transparent background for Electron window to show vibrancy */
+  background-color: transparent;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: transparent;
+  /* Allow see-through */
+  color: var(--text-primary);
+}
+
+#root {
+  width: 100%;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  text-align: center;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.card {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  background: var(--bg-secondary);
+  border: var(--border-glass);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+  animation: fadeIn 0.4s ease-out forwards;
+  /* Ensure no border radius persists */
+  border-radius: 0 !important;
+}
+
+/* Scrollbar styling for that hacker aesthetic */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}

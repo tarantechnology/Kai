@@ -1,0 +1,82 @@
+.tab-selector-container {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+}
+
+.tab-selector {
+    display: flex;
+    background: var(--bg-primary);
+    /* Translucent from index.css */
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 4px;
+    border-radius: 999px;
+    /* Pill shape */
+    position: relative;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    /* Enforce fixed width so tabs are mathematically equal */
+    width: 300px;
+    box-sizing: border-box;
+}
+
+.tab-btn {
+    flex: 1;
+    min-width: 0;
+    /* Allow shrinking below content width to respect flex: 1 exactness */
+    /* Ensure both tabs take up equal space */
+    position: relative;
+    background: transparent;
+    border: none;
+    padding: 8px 16px;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* Center content within the equal space */
+    gap: 8px;
+    transition: color 0.2s ease;
+    outline: none;
+}
+
+.tab-btn.active {
+    color: #000000;
+    /* Text becomes black on white pill */
+}
+
+.shortcut-hint {
+    font-size: 0.7rem;
+    opacity: 0.5;
+    background: rgba(255, 255, 255, 0.1);
+    padding: 2px 4px;
+    border-radius: 4px;
+}
+
+.tab-btn.active .shortcut-hint {
+    background: rgba(0, 0, 0, 0.1);
+}
+
+/* Animated Pill Indicator */
+.tab-indicator {
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    left: 4px;
+    width: calc(50% - 4px);
+    /* Assuming 2 equal tabs */
+    background: #FFFFFF;
+    border-radius: 999px;
+    z-index: 1;
+    transition: transform 0.25s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+.tab-indicator.extended {
+    transform: translateX(100%);
+}

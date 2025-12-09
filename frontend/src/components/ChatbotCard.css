@@ -1,0 +1,82 @@
+.chatbot-card {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-header {
+    margin-bottom: 12px;
+}
+
+.messages-area {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-right: 8px;
+    margin-bottom: 12px;
+}
+
+.message {
+    display: flex;
+}
+
+.message.user {
+    justify-content: flex-end;
+}
+
+.message.assistant {
+    justify-content: flex-start;
+}
+
+.message-bubble {
+    max-width: 80%;
+    padding: 8px 12px;
+    border-radius: 12px;
+    font-size: 0.9rem;
+    line-height: 1.4;
+}
+
+.message.user .message-bubble {
+    background-color: var(--text-primary);
+    color: var(--bg-primary);
+    border-bottom-right-radius: 4px;
+}
+
+.message.assistant .message-bubble {
+    background-color: var(--accent);
+    color: var(--text-primary);
+    border-bottom-left-radius: 4px;
+}
+
+.chat-input-area {
+    display: flex;
+    gap: 8px;
+}
+
+.chat-input-area input {
+    flex: 1;
+    background-color: var(--bg-primary);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    /* Slightly rounded input inside sharp card is ok, or make sharp */
+    border-radius: 0;
+    padding: 8px 12px;
+    color: var(--text-primary);
+    outline: none;
+}
+
+.chat-input-area input:focus {
+    border-color: var(--text-secondary);
+}
+
+.chat-input-area button {
+    background-color: var(--text-primary);
+    color: var(--bg-primary);
+    border: none;
+    padding: 0 16px;
+    border-radius: 0;
+    font-weight: 600;
+    cursor: pointer;
+}

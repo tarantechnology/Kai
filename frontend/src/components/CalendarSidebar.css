@@ -1,0 +1,85 @@
+.calendar-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.mini-calendar {
+    padding: 16px;
+    background-color: var(--bg-secondary);
+    border-radius: 12px;
+}
+
+.mini-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.mini-header button {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 4px;
+}
+
+.mini-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+    text-align: center;
+}
+
+.day-label {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+
+.mini-day {
+    font-size: 0.8rem;
+    padding: 4px;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.mini-day:hover {
+    background-color: var(--accent);
+}
+
+.mini-day.today {
+    background-color: var(--text-primary);
+    color: var(--bg-primary);
+    font-weight: bold;
+}
+
+.account-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-left: 12px;
+}
+
+.account-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.account-toggle {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1px solid var(--text-secondary);
+    cursor: pointer;
+}
+
+.account-email {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
