@@ -58,7 +58,8 @@ app.whenReady().then(() => {
   createWindow()
 
   // Register Global Shortcut
-  globalShortcut.register('CommandOrControl+:', () => {
+  // Register Global Shortcut (Handle both Cmd+: and Cmd+;)
+  const toggleWindow = () => {
     if (win) {
       if (win.isVisible()) {
         win.hide()
@@ -67,7 +68,10 @@ app.whenReady().then(() => {
         win.focus()
       }
     }
-  })
+  }
+
+  // Register multiple variants to be safe
+  globalShortcut.register('CommandOrControl+;', toggleWindow)
 })
 
 app.on('will-quit', () => {
