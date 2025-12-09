@@ -41,7 +41,7 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-    min-height: 100px;
+    /* Removed min-height so 1fr works correctly to fit container */
 }
 
 .dimmed {

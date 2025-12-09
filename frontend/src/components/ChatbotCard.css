@@ -2,9 +2,17 @@
     height: 100%;
     display: flex;
     flex-direction: column;
+    justify-content: space-between;
 }
 
-.chat-header {
+.chat-header h2 {
+    margin: 0;
+    font-size: 1rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 1px solid var(--border-glass);
+    padding-bottom: 12px;
     margin-bottom: 12px;
 }
 
@@ -13,70 +21,115 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding-right: 8px;
-    margin-bottom: 12px;
+    gap: 12px;
+    padding-right: 4px;
+    margin-bottom: 16px;
+}
+
+/* Scrollbar within chat */
+.messages-area::-webkit-scrollbar {
+    width: 4px;
+}
+
+.messages-area::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
 }
 
 .message {
     display: flex;
+    flex-direction: column;
+    gap: 4px;
 }
 
 .message.user {
-    justify-content: flex-end;
+    align-items: flex-end;
 }
 
 .message.assistant {
-    justify-content: flex-start;
+    align-items: flex-start;
 }
 
 .message-bubble {
-    max-width: 80%;
+    max-width: 85%;
     padding: 8px 12px;
-    border-radius: 12px;
     font-size: 0.9rem;
     line-height: 1.4;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    /* Soft rounding */
 }
 
 .message.user .message-bubble {
-    background-color: var(--text-primary);
-    color: var(--bg-primary);
-    border-bottom-right-radius: 4px;
+    background-color: var(--accent);
+    /* White */
+    color: #000;
+    /* Black Text */
+    border-bottom-right-radius: 2px;
+    /* Slight sharp accent on corner */
+    font-weight: 500;
 }
 
 .message.assistant .message-bubble {
-    background-color: var(--accent);
+    background-color: rgba(255, 255, 255, 0.05);
+    /* Subtle Glass */
     color: var(--text-primary);
-    border-bottom-left-radius: 4px;
+    border: 1px solid var(--border-glass);
+    border-bottom-left-radius: 2px;
+    /* Slight sharp accent on corner */
 }
 
 .chat-input-area {
     display: flex;
-    gap: 8px;
+    gap: 0;
+    border: 1px solid var(--border-glass);
+    width: 100%;
+    /* Force full width */
+    box-sizing: border-box;
+    background-color: var(--bg-primary);
+    /* Ensure background behind glass if needed */
+    border-radius: 12px;
+    /* Rounded Input Box */
+    overflow: hidden;
+    /* Clip children to radius */
 }
 
 .chat-input-area input {
     flex: 1;
-    background-color: var(--bg-primary);
-    border: 1px solid var(--accent);
-    border-radius: 8px;
-    /* Slightly rounded input inside sharp card is ok, or make sharp */
-    border-radius: 0;
-    padding: 8px 12px;
+    background-color: transparent;
+    border: none;
+    padding: 12px 16px;
+    /* slightly more padding for text comfort */
     color: var(--text-primary);
+    font-family: 'Inter', sans-serif;
     outline: none;
+    font-size: 0.9rem;
+    min-width: 0;
+    /* Allow flex shrink */
 }
 
-.chat-input-area input:focus {
-    border-color: var(--text-secondary);
+.chat-input-area input::placeholder {
+    color: var(--text-secondary);
+    opacity: 0.5;
 }
 
 .chat-input-area button {
-    background-color: var(--text-primary);
-    color: var(--bg-primary);
+    background-color: var(--accent);
+    /* White */
+    color: #000;
     border: none;
     padding: 0 16px;
-    border-radius: 0;
+    /* Reduced padding */
     font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    /* Slightly smaller text */
     cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+    /* Prevent wrap */
+}
+
+.chat-input-area button:hover {
+    background-color: #ddd;
+    /* Hover state */
 }
