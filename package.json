@@ -1,0 +1,14 @@
+{
+  "name": "kai",
+  "private": true,
+  "workspaces": [
+    "apps/desktop"
+  ],
+  "scripts": {
+    "dev": "npm run tauri:dev --workspace apps/desktop",
+    "frontend:dev": "npm run dev --workspace apps/desktop",
+    "frontend:build": "npm run build --workspace apps/desktop",
+    "build": "npm run tauri:build --workspace apps/desktop",
+    "backend": "cd services/backend && go run ./cmd/api"
+  }
+}

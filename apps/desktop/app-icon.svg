@@ -1,0 +1,20 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" rx="132" fill="url(#bg)" />
+  <rect x="92" y="92" width="328" height="328" rx="92" fill="url(#glass)" fill-opacity="0.92" />
+  <path
+    d="M170 352V160H212V247.2L293.4 160H346L264.8 245.4L350 352H299.4L236.8 272.2L212 298.4V352H170Z"
+    fill="white"
+    fill-opacity="0.96"
+  />
+  <defs>
+    <linearGradient id="bg" x1="64" y1="52" x2="430" y2="468" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#90B4FF" />
+      <stop offset="0.42" stop-color="#4D669D" />
+      <stop offset="1" stop-color="#101827" />
+    </linearGradient>
+    <linearGradient id="glass" x1="120" y1="110" x2="398" y2="402" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#23314B" stop-opacity="0.96" />
+      <stop offset="1" stop-color="#151D2E" stop-opacity="0.92" />
+    </linearGradient>
+  </defs>
+</svg>
