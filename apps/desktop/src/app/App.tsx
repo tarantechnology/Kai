@@ -3,7 +3,7 @@ import { CommandPalette } from "../features/command-center/CommandPalette";
 import { Dashboard } from "../features/dashboard/Dashboard";
 import { initialKaiState } from "../data/mockData";
 import { executeCommand, parseCommand } from "../lib/commandEngine";
-import { bindSurfaceListener, hideKaiWindow, isTauriRuntime, setPaletteHeight, warmLocalParser } from "../lib/desktop";
+import { bindSurfaceListener, isTauriRuntime, setPaletteHeight, warmLocalParser } from "../lib/desktop";
 import type { DesktopSurface, KaiState, PaletteResult, ViewMode } from "../lib/types";
 
 const loadingState: PaletteResult = {
@@ -20,6 +20,7 @@ export const App = () => {
   const [state, setState] = useState<KaiState>(initialKaiState);
   const [surface, setSurface] = useState<DesktopSurface>("palette");
   const [browserVisible, setBrowserVisible] = useState(true);
+  const [notesDraft, setNotesDraft] = useState("");
   const surfaceRef = useRef<DesktopSurface>("palette");
   const paletteRef = useRef<HTMLDivElement>(null);
 
@@ -84,15 +85,6 @@ export const App = () => {
 
   const handleSelectView = (activeView: ViewMode) => {
     setState((current) => ({ ...current, activeView }));
-  };
-
-  const handleHide = () => {
-    if (isTauriRuntime()) {
-      void hideKaiWindow();
-      return;
-    }
-
-    setBrowserVisible(false);
   };
 
   useEffect(() => {
@@ -198,7 +190,6 @@ export const App = () => {
           result={state.paletteResult}
           onQueryChange={handleQueryChange}
           onSubmit={handleSubmit}
-          onClose={handleHide}
         />
       )}
 
@@ -210,8 +201,9 @@ export const App = () => {
           assignments={state.assignments}
           accounts={state.accounts}
           syncQueue={state.syncQueue}
+          notesDraft={notesDraft}
+          onNotesDraftChange={setNotesDraft}
           onSelectView={handleSelectView}
-          onClose={handleHide}
         />
       )}
     </div>

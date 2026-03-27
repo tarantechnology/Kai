@@ -8,7 +8,6 @@ interface CommandPaletteProps {
   result: PaletteResult;
   onQueryChange: (value: string) => void;
   onSubmit: () => void;
-  onClose: () => void;
 }
 
 const TaskPreview = ({ tasks }: { tasks: TaskItem[] }) => (
@@ -34,7 +33,7 @@ const EventPreview = ({ events }: { events: EventItem[] }) => (
 );
 
 export const CommandPalette = forwardRef<HTMLDivElement, CommandPaletteProps>(
-  ({ query, result, onQueryChange, onSubmit, onClose }, ref) => (
+  ({ query, result, onQueryChange, onSubmit }, ref) => (
     <GlassPanel ref={ref} className={`palette ${result.mode === "idle" ? "is-collapsed" : "is-expanded"}`}>
       <form
         className="palette-input-row"
@@ -50,9 +49,18 @@ export const CommandPalette = forwardRef<HTMLDivElement, CommandPaletteProps>(
           className="palette-input"
           placeholder="What else do I have to do today?"
         />
-        <button type="button" className="ghost-icon-button" onClick={onClose} aria-label="Close Kai">
-          <X size={18} />
-        </button>
+        {query.trim().length > 0 ? (
+          <button
+            type="button"
+            className="ghost-icon-button ghost-icon-button-small"
+            onClick={() => onQueryChange("")}
+            aria-label="Clear search"
+          >
+            <X size={14} />
+          </button>
+        ) : (
+          <div className="palette-input-spacer" aria-hidden="true" />
+        )}
       </form>
 
       <div className={`palette-result ${result.mode === "idle" ? "is-hidden" : ""}`}>

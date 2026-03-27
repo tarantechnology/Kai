@@ -1,4 +1,5 @@
-import { CalendarDays, CheckSquare2, ChevronDown, ChevronRight, RefreshCcw, ShieldCheck, Square, X } from "lucide-react";
+import { CalendarDays, CheckSquare2, ChevronRight, ShieldCheck, Square } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { GlassPanel } from "../../components/GlassPanel";
 import { Sidebar } from "../../components/Sidebar";
 import type { AssignmentItem, ConnectedAccount, EventItem, SyncQueueItem, TaskItem, ViewMode } from "../../lib/types";
@@ -10,8 +11,9 @@ interface DashboardProps {
   assignments: AssignmentItem[];
   accounts: ConnectedAccount[];
   syncQueue: SyncQueueItem[];
+  notesDraft: string;
+  onNotesDraftChange: (value: string) => void;
   onSelectView: (view: ViewMode) => void;
-  onClose: () => void;
 }
 
 const hours = ["9:00 AM", "10:00 AM", "11:00 AM", "12:00 PM", "1:00 PM", "2:00 PM", "3:00 PM"];
@@ -24,66 +26,82 @@ const accentClass = {
   teal: "event-chip accent-teal",
 };
 
-const TodayView = ({ tasks, events, assignments, syncQueue }: Pick<DashboardProps, "tasks" | "events" | "assignments" | "syncQueue">) => (
-  <div className="view-grid">
-    <section className="hero-block">
-      <div>
-        <h1>Good afternoon, Derek</h1>
-        <p className="eyebrow">Thursday, March 27</p>
-      </div>
-      <div className="avatar">DW</div>
-    </section>
+const TodayView = ({
+  tasks,
+  events,
+  notesDraft,
+  onNotesDraftChange,
+}: Pick<DashboardProps, "tasks" | "events" | "notesDraft" | "onNotesDraftChange">) => {
+  const notesRef = useRef<HTMLTextAreaElement>(null);
 
-    <GlassPanel className="content-card schedule-summary-card">
-      <div className="schedule-summary-list">
-        {events.slice(0, 2).map((event) => (
-          <div key={event.id} className="schedule-summary-row">
-            <span className="schedule-time">{event.startLabel}</span>
-            <span>{event.title}</span>
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      notesRef.current?.focus();
+      notesRef.current?.setSelectionRange(notesDraft.length, notesDraft.length);
+    }, 60);
+
+    return () => window.clearTimeout(timer);
+  }, [notesDraft.length]);
+
+  return (
+    <div className="view-grid today-layout">
+      <section className="hero-block">
+        <div>
+          <h1>Good afternoon, Derek</h1>
+          <p className="eyebrow">Thursday, March 27</p>
+        </div>
+        <div className="avatar">DW</div>
+      </section>
+
+      <GlassPanel className="content-card today-task-card">
+        <div className="card-header">
+          <h2>Reminders</h2>
+          <span>Today</span>
+        </div>
+        <div className="today-task-list">
+          {tasks
+            .filter((task) => task.lane === "today")
+            .map((task) => (
+              <div key={task.id} className={`task-row today-task-row ${task.status === "done" ? "is-done" : ""}`}>
+                {task.status === "done" ? <CheckSquare2 size={20} /> : <Square size={20} />}
+                <span>{task.title}</span>
+                <span>{task.dueLabel ?? task.dueAt ?? ""}</span>
+              </div>
+            ))}
+        </div>
+      </GlassPanel>
+
+      <GlassPanel className="content-card notes-card">
+        <textarea
+          ref={notesRef}
+          className="notes-pad"
+          value={notesDraft}
+          onChange={(event) => onNotesDraftChange(event.target.value)}
+          placeholder="Write a quick thought, task, or reminder..."
+        />
+      </GlassPanel>
+
+      <GlassPanel className="content-card assignment-card today-assignment-card">
+        <div className="card-header assignment-card-header">
+          <div className="assignment-card-title">
+            <CalendarDays size={18} />
+            <h2>Calendar</h2>
+          </div>
+          <ChevronRight size={18} />
+        </div>
+        {events.map((event) => (
+          <div key={event.id} className="assignment-row featured-assignment-row calendar-event-row">
+            <div>
+              <strong>{event.title}</strong>
+              <p>{event.startLabel} - {event.endLabel}</p>
+            </div>
+            <span>{event.source === "google" ? "Google" : "Kai"}</span>
           </div>
         ))}
-      </div>
-      <ChevronDown size={18} className="schedule-summary-icon" />
-    </GlassPanel>
-
-    <GlassPanel className="content-card today-task-card">
-      <div className="today-task-list">
-        {tasks
-          .filter((task) => task.lane === "today")
-          .map((task) => (
-            <div key={task.id} className={`task-row today-task-row ${task.status === "done" ? "is-done" : ""}`}>
-              {task.status === "done" ? <CheckSquare2 size={20} /> : <Square size={20} />}
-              <span>{task.title}</span>
-              <span>{task.dueLabel ?? task.dueAt ?? ""}</span>
-            </div>
-          ))}
-      </div>
-      <div className="sync-row">
-        <RefreshCcw size={16} />
-        <span>{syncQueue[0]?.description ?? "Local database is current"}</span>
-      </div>
-    </GlassPanel>
-
-    <GlassPanel className="content-card assignment-card today-assignment-card">
-      <div className="card-header assignment-card-header">
-        <div className="assignment-card-title">
-          <CalendarDays size={18} />
-          <h2>Calendar</h2>
-        </div>
-        <ChevronRight size={18} />
-      </div>
-      {assignments.map((assignment) => (
-        <div key={assignment.id} className="assignment-row featured-assignment-row">
-          <div>
-            <strong>{assignment.title}</strong>
-            <p>{assignment.subtitle}</p>
-          </div>
-          <span>{assignment.dueLabel}</span>
-        </div>
-      ))}
-    </GlassPanel>
-  </div>
-);
+      </GlassPanel>
+    </div>
+  );
+};
 
 const CalendarView = ({ events, assignments }: Pick<DashboardProps, "events" | "assignments">) => (
   <div className="calendar-layout">
@@ -261,20 +279,23 @@ export const Dashboard = ({
   assignments,
   accounts,
   syncQueue,
+  notesDraft,
+  onNotesDraftChange,
   onSelectView,
-  onClose,
 }: DashboardProps) => (
   <GlassPanel className="dashboard-shell">
     <Sidebar activeView={activeView} onSelect={onSelectView} />
     <main className="dashboard-content">
       <div className="dashboard-topbar">
         <div className="toolbar-pill">Kai</div>
-        <button type="button" className="ghost-icon-button" onClick={onClose} aria-label="Close Kai">
-          <X size={18} />
-        </button>
       </div>
       {activeView === "today" && (
-        <TodayView tasks={tasks} events={events} assignments={assignments} syncQueue={syncQueue} />
+        <TodayView
+          tasks={tasks}
+          events={events}
+          notesDraft={notesDraft}
+          onNotesDraftChange={onNotesDraftChange}
+        />
       )}
       {activeView === "calendar" && <CalendarView events={events} assignments={assignments} />}
       {activeView === "tasks" && <TasksView tasks={tasks} syncQueue={syncQueue} />}
