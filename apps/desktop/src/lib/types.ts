@@ -1,4 +1,4 @@
-export type ViewMode = "today" | "calendar" | "tasks" | "settings";
+export type ViewMode = "today" | "calendar" | "tasks" | "notes" | "settings";
 export type DesktopSurface = "palette" | "dashboard";
 export type PaletteMode =
   | "idle"
@@ -27,9 +27,18 @@ export interface EventItem {
   title: string;
   startLabel: string;
   endLabel: string;
+  day: "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";
+  dateLabel: string;
   track: number;
   accent: "gold" | "blue" | "teal";
   source: SourceType;
+}
+
+export interface NoteItem {
+  id: string;
+  title: string;
+  body: string;
+  updatedAt: string;
 }
 
 export interface AssignmentItem {

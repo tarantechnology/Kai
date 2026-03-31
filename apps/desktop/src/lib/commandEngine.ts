@@ -213,6 +213,8 @@ const buildEvent = (title: string, startLabel: string, endLabel: string): EventI
   title,
   startLabel,
   endLabel,
+  day: "Thu",
+  dateLabel: "28",
   track: 3,
   accent: "blue",
   source: "kai",

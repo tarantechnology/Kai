@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CommandPalette } from "../features/command-center/CommandPalette";
 import { Dashboard } from "../features/dashboard/Dashboard";
 import { initialKaiState } from "../data/mockData";
 import { executeCommand, parseCommand } from "../lib/commandEngine";
 import { bindSurfaceListener, isTauriRuntime, setPaletteHeight, warmLocalParser } from "../lib/desktop";
-import type { DesktopSurface, KaiState, PaletteResult, ViewMode } from "../lib/types";
+import { loadNotes, loadQuickNote, saveNotes, saveQuickNote } from "../lib/persistence";
+import type { DesktopSurface, KaiState, NoteItem, PaletteResult, ViewMode } from "../lib/types";
 
 const loadingState: PaletteResult = {
   mode: "loading",
@@ -16,13 +17,41 @@ const PALETTE_COLLAPSED_HEIGHT = 88;
 const PALETTE_MIN_EXPANDED_HEIGHT = 170;
 const PALETTE_MAX_HEIGHT = 520;
 
+const buildInitialNotes = (): NoteItem[] => {
+  const persisted = loadNotes();
+
+  if (persisted.length > 0) {
+    return [...persisted].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  return [];
+};
+
+const deriveNoteTitle = (body: string) => {
+  const firstLine = body
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean);
+
+  return firstLine ? firstLine.slice(0, 48) : "Untitled Note";
+};
+
 export const App = () => {
   const [state, setState] = useState<KaiState>(initialKaiState);
   const [surface, setSurface] = useState<DesktopSurface>("palette");
   const [browserVisible, setBrowserVisible] = useState(true);
-  const [notesDraft, setNotesDraft] = useState("");
+  const [quickNoteDraft, setQuickNoteDraft] = useState(() => loadQuickNote());
+  const [notes, setNotes] = useState<NoteItem[]>(() => buildInitialNotes());
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const surfaceRef = useRef<DesktopSurface>("palette");
   const paletteRef = useRef<HTMLDivElement>(null);
+
+  const sortedNotes = useMemo(
+    () => [...notes].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    [notes],
+  );
+  const selectedNote = sortedNotes.find((note) => note.id === selectedNoteId) ?? sortedNotes[0] ?? null;
 
   const handleSubmit = () => {
     const sourceText = state.paletteQuery.trim();
@@ -85,6 +114,60 @@ export const App = () => {
 
   const handleSelectView = (activeView: ViewMode) => {
     setState((current) => ({ ...current, activeView }));
+  };
+
+  const handleQuickNoteChange = (value: string) => {
+    setQuickNoteDraft(value);
+  };
+
+  const handleSelectNote = (noteId: string) => {
+    setSelectedNoteId(noteId);
+    setState((current) => ({ ...current, activeView: "notes" }));
+  };
+
+  const handleCreateNote = () => {
+    const now = new Date().toISOString();
+    const newNote: NoteItem = {
+      id: crypto.randomUUID(),
+      title: "Untitled Note",
+      body: "",
+      updatedAt: now,
+    };
+
+    setNotes((current) => [newNote, ...current]);
+    setSelectedNoteId(newNote.id);
+    setState((current) => ({ ...current, activeView: "notes" }));
+  };
+
+  const handleDeleteSelectedNote = () => {
+    const activeNoteId = selectedNote?.id;
+
+    if (!activeNoteId) {
+      return;
+    }
+
+    setNotes((current) => current.filter((note) => note.id !== activeNoteId));
+  };
+
+  const handleUpdateSelectedNote = (body: string) => {
+    const activeNoteId = selectedNote?.id;
+
+    if (!activeNoteId) {
+      return;
+    }
+
+    setNotes((current) =>
+      current.map((note) =>
+        note.id === activeNoteId
+          ? {
+              ...note,
+              body,
+              title: deriveNoteTitle(body),
+              updatedAt: new Date().toISOString(),
+            }
+          : note,
+      ),
+    );
   };
 
   useEffect(() => {
@@ -152,6 +235,40 @@ export const App = () => {
   }, [surface]);
 
   useEffect(() => {
+    saveQuickNote(quickNoteDraft);
+  }, [quickNoteDraft]);
+
+  useEffect(() => {
+    saveNotes(notes);
+  }, [notes]);
+
+  useEffect(() => {
+    if (!selectedNoteId && sortedNotes[0]) {
+      setSelectedNoteId(sortedNotes[0].id);
+      return;
+    }
+
+    if (selectedNoteId && !sortedNotes.some((note) => note.id === selectedNoteId)) {
+      setSelectedNoteId(sortedNotes[0]?.id ?? null);
+    }
+  }, [selectedNoteId, sortedNotes]);
+
+  useEffect(() => {
+    if (state.activeView === "notes" && sortedNotes.length === 0) {
+      const now = new Date().toISOString();
+      const newNote: NoteItem = {
+        id: crypto.randomUUID(),
+        title: "Untitled Note",
+        body: "",
+        updatedAt: now,
+      };
+
+      setNotes([newNote]);
+      setSelectedNoteId(newNote.id);
+    }
+  }, [state.activeView, sortedNotes]);
+
+  useEffect(() => {
     if (!isTauriRuntime()) {
       return;
     }
@@ -201,8 +318,17 @@ export const App = () => {
           assignments={state.assignments}
           accounts={state.accounts}
           syncQueue={state.syncQueue}
-          notesDraft={notesDraft}
-          onNotesDraftChange={setNotesDraft}
+          quickNoteDraft={quickNoteDraft}
+          onQuickNoteDraftChange={handleQuickNoteChange}
+          notes={sortedNotes}
+          selectedNoteId={selectedNote?.id ?? null}
+          selectedNoteBody={selectedNote?.body ?? ""}
+          onSelectNote={handleSelectNote}
+          onCreateNote={handleCreateNote}
+          onDeleteSelectedNote={handleDeleteSelectedNote}
+          onUpdateSelectedNote={handleUpdateSelectedNote}
+          sidebarCollapsed={sidebarCollapsed}
+          onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
           onSelectView={handleSelectView}
         />
       )}
