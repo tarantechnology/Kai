@@ -26,6 +26,7 @@ const isString = (value: unknown): value is string => typeof value === "string" 
 const isNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
 
 const normalizeConfidence = (value: unknown) => {
+  // parser confidence is normalized here so the ui can rely on a stable 0..1 range.
   if (!isNumber(value)) {
     return 0.5;
   }
@@ -34,6 +35,7 @@ const normalizeConfidence = (value: unknown) => {
 };
 
 const parseNaturalTimeLabel = (sourceText: string) => {
+  // this is a tiny deterministic repair layer for simple reminder times like "at 7".
   const match = sourceText.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
 
   if (!match) {
@@ -63,6 +65,7 @@ const extractReminderTitle = (sourceText: string) => {
 };
 
 const repairReminderCommand = (value: CommandRecord, sourceText: string, confidence: number): KaiCommand | null => {
+  // the model can miss obvious reminder slots, so this patch-up keeps simple commands reliable.
   const title = isString(value.title) ? value.title : extractReminderTitle(sourceText);
   const datetimeLabel = isString(value.datetimeLabel) ? value.datetimeLabel : parseNaturalTimeLabel(sourceText);
 
@@ -88,6 +91,7 @@ const repairFromSourceText = (sourceText: string, confidence: number): KaiComman
 };
 
 const validateKaiCommand = (value: unknown, sourceText: string): KaiCommand | null => {
+  // this keeps execution safe by converting only schema-valid payloads into app commands.
   if (!isRecord(value) || !isString(value.type)) {
     return null;
   }
@@ -184,6 +188,7 @@ export const parseCommand = async (sourceText: string): Promise<LocalParserRespo
   const { invoke } = await import("@tauri-apps/api/core");
   const now = new Date().toLocaleString();
 
+  // the frontend does not call ollama directly; it goes through tauri so native backends stay swappable.
   const response = (await invoke("parse_command_with_ollama", {
     input: sourceText,
     now,
@@ -239,6 +244,7 @@ export const executeCommand = (
   command: KaiCommand | null,
   state: KaiState,
 ): { nextState: KaiState; result: PaletteResult } => {
+  // this function is the deterministic half of the architecture: commands in, state updates out.
   if (!command) {
     return {
       nextState: state,

@@ -3,7 +3,7 @@ import { CommandPalette } from "../features/command-center/CommandPalette";
 import { Dashboard } from "../features/dashboard/Dashboard";
 import { initialKaiState } from "../data/mockData";
 import { executeCommand, parseCommand } from "../lib/commandEngine";
-import { bindSurfaceListener, isTauriRuntime, setPaletteHeight, warmLocalParser } from "../lib/desktop";
+import { bindSurfaceListener, centerKaiWindow, isTauriRuntime, setPaletteHeight, warmLocalParser } from "../lib/desktop";
 import { loadNotes, loadQuickNote, saveNotes, saveQuickNote } from "../lib/persistence";
 import type { DesktopSurface, KaiState, NoteItem, PaletteResult, ViewMode } from "../lib/types";
 
@@ -18,6 +18,7 @@ const PALETTE_MIN_EXPANDED_HEIGHT = 170;
 const PALETTE_MAX_HEIGHT = 520;
 
 const buildInitialNotes = (): NoteItem[] => {
+  // notes are loaded once from local storage, then app state becomes the live source of truth.
   const persisted = loadNotes();
 
   if (persisted.length > 0) {
@@ -28,6 +29,7 @@ const buildInitialNotes = (): NoteItem[] => {
 };
 
 const deriveNoteTitle = (body: string) => {
+  // notes use the first meaningful line as their title, similar to apple notes.
   const firstLine = body
     .split("\n")
     .map((line) => line.trim())
@@ -37,6 +39,7 @@ const deriveNoteTitle = (body: string) => {
 };
 
 export const App = () => {
+  // this component is the top-level orchestrator for the desktop ui.
   const [state, setState] = useState<KaiState>(initialKaiState);
   const [surface, setSurface] = useState<DesktopSurface>("palette");
   const [browserVisible, setBrowserVisible] = useState(true);
@@ -51,6 +54,7 @@ export const App = () => {
     () => [...notes].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     [notes],
   );
+  // the selected note falls back to the most recently updated note if no id is active.
   const selectedNote = sortedNotes.find((note) => note.id === selectedNoteId) ?? sortedNotes[0] ?? null;
 
   const handleSubmit = () => {
@@ -62,6 +66,7 @@ export const App = () => {
 
     setState((current) => ({ ...current, paletteResult: loadingState }));
 
+    // command submission is always parse first, execute second.
     void parseCommand(sourceText)
       .then((parsed) => {
         setState((current) => {
@@ -78,6 +83,7 @@ export const App = () => {
 
           const { nextState, result } = executeCommand(parsed.command, current);
 
+          // executeCommand is deterministic, so the model interprets but code still controls behavior.
           return {
             ...nextState,
             paletteResult: result,
@@ -174,6 +180,7 @@ export const App = () => {
     let isMounted = true;
 
     const setupDesktop = async () => {
+      // rust emits surface changes, and react listens here so the correct screen renders.
       const unlisten = await bindSurfaceListener((nextSurface) => {
         if (!isMounted) {
           return;
@@ -193,6 +200,7 @@ export const App = () => {
     });
 
     if (!isTauriRuntime()) {
+      // browser shortcuts only exist as a local dev fallback.
       const handleKeydown = (event: KeyboardEvent) => {
         if (!(event.metaKey || event.ctrlKey)) {
           return;
@@ -235,10 +243,12 @@ export const App = () => {
   }, [surface]);
 
   useEffect(() => {
+    // quick capture notes are persisted separately from the full notes list.
     saveQuickNote(quickNoteDraft);
   }, [quickNoteDraft]);
 
   useEffect(() => {
+    // full notes are saved whenever the note list changes.
     saveNotes(notes);
   }, [notes]);
 
@@ -273,6 +283,7 @@ export const App = () => {
       return;
     }
 
+    // warming the local parser avoids the first-command cold start when ollama is used.
     void warmLocalParser().catch(() => undefined);
   }, []);
 
@@ -282,6 +293,7 @@ export const App = () => {
     }
 
     window.requestAnimationFrame(() => {
+      // the palette window resizes to match its rendered content instead of using one fixed height.
       const measuredHeight =
         state.paletteResult.mode === "idle"
           ? PALETTE_COLLAPSED_HEIGHT
@@ -293,6 +305,20 @@ export const App = () => {
       void setPaletteHeight(measuredHeight);
     });
   }, [surface, state.paletteResult]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) {
+      return;
+    }
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      void centerKaiWindow();
+    });
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+    };
+  }, [surface, sidebarCollapsed]);
 
   if (!browserVisible && !isTauriRuntime()) {
     return <div className="app-shell app-shell-hidden" />;

@@ -32,6 +32,7 @@ fn parser_model() -> String {
 }
 
 fn command_schema() -> serde_json::Value {
+    // ollama is asked for strict json so the frontend can validate a narrow command shape.
     json!({
         "type": "object",
         "properties": {
@@ -78,6 +79,7 @@ fn command_schema() -> serde_json::Value {
 }
 
 fn system_prompt(now: &str) -> String {
+    // this prompt teaches the local model to do intent mapping, not direct app control.
     format!(
         "You are Kai's local command interpreter. Current local date and time: {now}. \
 Interpret the user's raw natural-language request into exactly one supported command or return null if unsupported or genuinely ambiguous. \
@@ -114,6 +116,7 @@ pub async fn parse(input: String, now: String) -> Result<ParserResponse, String>
     let client = Client::new();
     let model = parser_model();
 
+    // the native side owns parser calls so the backend can change without rewriting react code.
     let response = client
         .post(OLLAMA_API_URL)
         .json(&json!({
@@ -168,6 +171,7 @@ pub async fn warm() -> Result<(), String> {
     let client = Client::new();
     let model = parser_model();
 
+    // this lightweight request keeps the model warm so the first real command feels faster.
     let response = client
         .post(OLLAMA_API_URL)
         .json(&json!({

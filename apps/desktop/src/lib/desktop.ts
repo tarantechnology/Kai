@@ -12,6 +12,7 @@ interface SurfacePayload {
   surface: DesktopSurface;
 }
 
+// this checks whether react is running inside tauri or just in a plain browser dev session.
 export const isTauriRuntime = () =>
   typeof window !== "undefined" && typeof window.__TAURI_INTERNALS__ !== "undefined";
 
@@ -22,6 +23,15 @@ export const hideKaiWindow = async () => {
 
   const { invoke } = await import("@tauri-apps/api/core");
   await invoke("hide_main_window");
+};
+
+export const centerKaiWindow = async () => {
+  if (!isTauriRuntime()) {
+    return;
+  }
+
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("center_main_window");
 };
 
 export const setPaletteHeight = async (height: number) => {
@@ -49,6 +59,7 @@ export const bindSurfaceListener = async (onSurface: (surface: DesktopSurface) =
 
   const { listen } = await import("@tauri-apps/api/event");
 
+  // rust emits one event when it decides which surface should be visible.
   const unlisten = await listen<SurfacePayload>(SURFACE_EVENT, (event) => {
     onSurface(event.payload.surface);
   });
