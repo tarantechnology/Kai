@@ -129,14 +129,13 @@ const accounts: ConnectedAccount[] = [
     id: "account-google",
     provider: "google",
     label: "Google",
-    email: "derik@example.com",
-    status: "connected",
+    status: "disconnected",
   },
   {
     id: "account-canvas",
     provider: "canvas",
     label: "Canvas",
-    status: "connected",
+    status: "disconnected",
   },
 ];
 

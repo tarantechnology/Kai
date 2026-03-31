@@ -2,6 +2,7 @@
 
 mod parser;
 
+use std::process::Command;
 use std::sync::Mutex;
 
 use serde::Serialize;
@@ -44,6 +45,39 @@ fn center_main_window(app: AppHandle) -> Result<(), String> {
         .ok_or_else(|| "main window not available".to_string())?;
 
     window.center().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("only http and https urls are allowed".to_string());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -140,6 +174,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             hide_main_window,
             center_main_window,
+            open_external_url,
             set_palette_height,
             parse_command_with_ollama,
             warm_ollama_model

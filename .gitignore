@@ -1,6 +1,8 @@
 .DS_Store
 *.log
 coverage
+.env
+*.env
 
 node_modules/
 dist/
@@ -10,5 +12,9 @@ apps/desktop/dist/
 apps/desktop/src-tauri/target/
 
 services/backend/bin/
+services/backend/.env
 
 kai_v1_design_document.md
+client_secret_914085105561-teno8rlj6c7nioqo2vahf8cglt1phr13.apps.googleusercontent.com.json
+kaiWebCreds.json
+.gocache/

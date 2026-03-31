@@ -40,6 +40,7 @@ interface DashboardProps {
   onUpdateSelectedNote: (value: string) => void;
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
+  onStartGoogleAuth: () => void;
   onSelectView: (view: ViewMode) => void;
 }
 
@@ -535,7 +536,11 @@ const NotesView = ({
   );
 };
 
-const SettingsView = ({ accounts, syncQueue }: Pick<DashboardProps, "accounts" | "syncQueue">) => (
+const SettingsView = ({
+  accounts,
+  syncQueue,
+  onStartGoogleAuth,
+}: Pick<DashboardProps, "accounts" | "syncQueue" | "onStartGoogleAuth">) => (
   <div className="split-view">
     <section>
       <div className="section-heading">
@@ -555,9 +560,15 @@ const SettingsView = ({ accounts, syncQueue }: Pick<DashboardProps, "accounts" |
           <div key={account.id} className="settings-row">
             <div>
               <strong>{account.label}</strong>
-              <p>{account.email ?? "Connected"}</p>
+              <p>{account.email ?? (account.status === "disconnected" ? "Not connected" : "Connected")}</p>
             </div>
-            <span className="status-pill">{account.status}</span>
+            {account.provider === "google" && account.status !== "connected" ? (
+              <button type="button" className="toolbar-pill toolbar-button" onClick={onStartGoogleAuth}>
+                Connect
+              </button>
+            ) : (
+              <span className="status-pill">{account.status}</span>
+            )}
           </div>
         ))}
         <div className="settings-row">
@@ -615,6 +626,7 @@ export const Dashboard = ({
   onUpdateSelectedNote,
   sidebarCollapsed,
   onToggleSidebar,
+  onStartGoogleAuth,
   onSelectView,
 }: DashboardProps) => (
   <GlassPanel className={`dashboard-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
@@ -644,7 +656,9 @@ export const Dashboard = ({
           onUpdateSelectedNote={onUpdateSelectedNote}
         />
       )}
-      {activeView === "settings" && <SettingsView accounts={accounts} syncQueue={syncQueue} />}
+      {activeView === "settings" && (
+        <SettingsView accounts={accounts} syncQueue={syncQueue} onStartGoogleAuth={onStartGoogleAuth} />
+      )}
     </main>
   </GlassPanel>
 );

@@ -13,7 +13,7 @@ func main() {
 
 	log.Printf("kai backend listening on :%s", cfg.Port)
 
-	if err := http.ListenAndServe(":"+cfg.Port, server.New()); err != nil {
+	if err := http.ListenAndServe(":"+cfg.Port, server.New(cfg)); err != nil {
 		log.Fatal(err)
 	}
 }

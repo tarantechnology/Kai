@@ -54,7 +54,7 @@ export interface ConnectedAccount {
   provider: "google" | "canvas";
   label: string;
   email?: string;
-  status: "connected" | "syncing";
+  status: "connected" | "syncing" | "disconnected" | "error";
 }
 
 export type KaiCommand =

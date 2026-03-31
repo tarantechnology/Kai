@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CommandPalette } from "../features/command-center/CommandPalette";
 import { Dashboard } from "../features/dashboard/Dashboard";
 import { initialKaiState } from "../data/mockData";
+import { fetchGoogleAuthStatus, startGoogleAuth } from "../lib/backend";
 import { executeCommand, parseCommand } from "../lib/commandEngine";
 import { bindSurfaceListener, centerKaiWindow, isTauriRuntime, setPaletteHeight, warmLocalParser } from "../lib/desktop";
 import { loadNotes, loadQuickNote, saveNotes, saveQuickNote } from "../lib/persistence";
@@ -307,6 +308,59 @@ export const App = () => {
   }, [surface, state.paletteResult]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const syncGoogleAuthStatus = async () => {
+      try {
+        const status = await fetchGoogleAuthStatus();
+
+        if (cancelled) {
+          return;
+        }
+
+        setState((current) => ({
+          ...current,
+          accounts: current.accounts.map((account) =>
+            account.provider === "google"
+              ? {
+                  ...account,
+                  email: status.email,
+                  status: status.status,
+                }
+              : account,
+          ),
+        }));
+      } catch {
+        if (cancelled) {
+          return;
+        }
+
+        setState((current) => ({
+          ...current,
+          accounts: current.accounts.map((account) =>
+            account.provider === "google"
+              ? {
+                  ...account,
+                  status: "disconnected",
+                }
+              : account,
+          ),
+        }));
+      }
+    };
+
+    void syncGoogleAuthStatus();
+    const interval = window.setInterval(() => {
+      void syncGoogleAuthStatus();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!isTauriRuntime()) {
       return;
     }
@@ -355,6 +409,7 @@ export const App = () => {
           onUpdateSelectedNote={handleUpdateSelectedNote}
           sidebarCollapsed={sidebarCollapsed}
           onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
+          onStartGoogleAuth={startGoogleAuth}
           onSelectView={handleSelectView}
         />
       )}
