@@ -1,6 +1,8 @@
 # Kai
 
-Local-first productivity command layer prototype based on the V1 design document.
+Local-first productivity command layer. Quickest, Fastest, Easiest way to access your Local AI Agent. 
+
+In Progress: Google, Outlook, Apple Integrations
 
 ## Structure
 
