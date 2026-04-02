@@ -10,6 +10,7 @@ import (
 type Config struct {
 	Port     string
 	Supabase SupabaseConfig
+	Google   GoogleConfig
 }
 
 type SupabaseConfig struct {
@@ -18,6 +19,13 @@ type SupabaseConfig struct {
 	ServiceRoleKey   string
 	RedirectURL      string
 	EmailRedirectURL string
+}
+
+type GoogleConfig struct {
+	ClientID           string
+	ClientSecret       string
+	Scopes             []string
+	ConnectRedirectURL string
 }
 
 func Load() Config {
@@ -29,10 +37,12 @@ func Load() Config {
 	}
 
 	supabase := loadSupabaseConfig()
+	google := loadGoogleConfig()
 
 	return Config{
 		Port:     port,
 		Supabase: supabase,
+		Google:   google,
 	}
 }
 
@@ -47,6 +57,24 @@ func loadSupabaseConfig() SupabaseConfig {
 		ServiceRoleKey:   strings.TrimSpace(os.Getenv("SUPABASE_SERVICE_ROLE_KEY")),
 		RedirectURL:      defaultIfEmpty(redirectURL, "kai://auth/callback"),
 		EmailRedirectURL: defaultIfEmpty(emailRedirectURL, "kai://auth/callback"),
+	}
+}
+
+func loadGoogleConfig() GoogleConfig {
+	scopes := strings.Split(strings.TrimSpace(os.Getenv("GOOGLE_SCOPES")), ",")
+	filteredScopes := make([]string, 0, len(scopes))
+	for _, scope := range scopes {
+		scope = strings.TrimSpace(scope)
+		if scope != "" {
+			filteredScopes = append(filteredScopes, scope)
+		}
+	}
+
+	return GoogleConfig{
+		ClientID:           strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")),
+		ClientSecret:       strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")),
+		Scopes:             filteredScopes,
+		ConnectRedirectURL: defaultIfEmpty(strings.TrimSpace(os.Getenv("GOOGLE_CONNECT_REDIRECT_URL")), "http://127.0.0.1:8080/auth/google/connect/callback"),
 	}
 }
 

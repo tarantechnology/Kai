@@ -41,8 +41,10 @@ interface DashboardProps {
   sidebarCollapsed: boolean;
   authName?: string;
   authEmail?: string;
+  authProviderLabel?: string;
   onToggleSidebar: () => void;
-  onStartGoogleAuth: () => void;
+  onConnectGoogle: () => void;
+  onDisconnectGoogle: () => void;
   onLogout: () => void;
   onSelectView: (view: ViewMode) => void;
 }
@@ -544,9 +546,14 @@ const SettingsView = ({
   syncQueue,
   authName,
   authEmail,
-  onStartGoogleAuth,
+  authProviderLabel,
+  onConnectGoogle,
+  onDisconnectGoogle,
   onLogout,
-}: Pick<DashboardProps, "accounts" | "syncQueue" | "authName" | "authEmail" | "onStartGoogleAuth" | "onLogout">) => (
+}: Pick<
+  DashboardProps,
+  "accounts" | "syncQueue" | "authName" | "authEmail" | "authProviderLabel" | "onConnectGoogle" | "onDisconnectGoogle" | "onLogout"
+>) => (
   <div className="split-view">
     <section>
       <div className="section-heading">
@@ -558,7 +565,7 @@ const SettingsView = ({
           <div className="avatar">DW</div>
           <div>
             <strong>{authName ?? "Kai user"}</strong>
-            <p>{authEmail ?? "Signed in"}</p>
+            <p>{authEmail ?? authProviderLabel ?? "Signed in"}</p>
           </div>
           <button type="button" className="toolbar-pill toolbar-button" onClick={onLogout}>
             Sign out
@@ -570,10 +577,16 @@ const SettingsView = ({
               <strong>{account.label}</strong>
               <p>{account.email ?? (account.status === "disconnected" ? "Not connected" : "Connected")}</p>
             </div>
-            {account.provider === "google" && account.status !== "connected" ? (
-              <button type="button" className="toolbar-pill toolbar-button" onClick={onStartGoogleAuth}>
-                Connect
-              </button>
+            {account.provider === "google" ? (
+              account.status === "connected" ? (
+                <button type="button" className="toolbar-pill toolbar-button" onClick={onDisconnectGoogle}>
+                  Disconnect
+                </button>
+              ) : (
+                <button type="button" className="toolbar-pill toolbar-button" onClick={onConnectGoogle}>
+                  Connect
+                </button>
+              )
             ) : (
               <span className="status-pill">{account.status}</span>
             )}
@@ -635,8 +648,10 @@ export const Dashboard = ({
   sidebarCollapsed,
   authName,
   authEmail,
+  authProviderLabel,
   onToggleSidebar,
-  onStartGoogleAuth,
+  onConnectGoogle,
+  onDisconnectGoogle,
   onLogout,
   onSelectView,
 }: DashboardProps) => (
@@ -673,7 +688,9 @@ export const Dashboard = ({
           syncQueue={syncQueue}
           authName={authName}
           authEmail={authEmail}
-          onStartGoogleAuth={onStartGoogleAuth}
+          authProviderLabel={authProviderLabel}
+          onConnectGoogle={onConnectGoogle}
+          onDisconnectGoogle={onDisconnectGoogle}
           onLogout={onLogout}
         />
       )}

@@ -32,14 +32,29 @@ export interface AuthCallbackPayload {
   token_type?: string;
   expires_in?: number;
   type?: string;
+  intent?: string;
+  status?: string;
+  message?: string;
   error?: string;
   error_description?: string;
 }
 
 const BACKEND_BASE_URL = "http://127.0.0.1:8080";
 
-export const startGoogleAuth = async () => {
-  const url = `${BACKEND_BASE_URL}/auth/google/start`;
+export const startGoogleAuth = async (intent: "login" | "connect" = "login") => {
+  const url = `${BACKEND_BASE_URL}/auth/google/start?intent=${intent}`;
+
+  if (isTauriRuntime()) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("open_external_url", { url });
+    return;
+  }
+
+  window.open(url, "_blank", "noopener,noreferrer");
+};
+
+export const startGoogleConnect = async () => {
+  const url = `${BACKEND_BASE_URL}/auth/google/connect/start`;
 
   if (isTauriRuntime()) {
     const { invoke } = await import("@tauri-apps/api/core");
@@ -93,6 +108,16 @@ export const signInWithEmail = (payload: EmailAuthPayload) => postAuthJSON("/aut
 export const signUpWithEmail = (payload: EmailAuthPayload) => postAuthJSON("/auth/email/sign-up", payload);
 
 export const completeAuthSession = (payload: AuthCallbackPayload) => postAuthJSON("/auth/session", payload);
+
+export const disconnectGoogle = async (): Promise<void> => {
+  const response = await fetch(`${BACKEND_BASE_URL}/auth/google/disconnect`, {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Google disconnect returned HTTP ${response.status}`);
+  }
+};
 
 export const logoutKai = async (): Promise<void> => {
   const response = await fetch(`${BACKEND_BASE_URL}/auth/logout`, {

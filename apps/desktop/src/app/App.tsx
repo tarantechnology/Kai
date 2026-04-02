@@ -5,12 +5,14 @@ import { CommandPalette } from "../features/command-center/CommandPalette";
 import { Dashboard } from "../features/dashboard/Dashboard";
 import {
   completeAuthSession,
+  disconnectGoogle,
   fetchGoogleAuthStatus,
   fetchKaiAuthStatus,
   logoutKai,
   signInWithEmail,
   signUpWithEmail,
   startGoogleAuth,
+  startGoogleConnect,
   type EmailAuthPayload,
   type KaiAuthStatus,
   type AuthCallbackPayload,
@@ -79,6 +81,9 @@ const parseKaiAuthCallbackUrl = (value: string): AuthCallbackPayload | null => {
     return {
       provider: searchParams.get("provider") ?? undefined,
       flow_state: searchParams.get("flow_state") ?? undefined,
+      intent: searchParams.get("intent") ?? undefined,
+      status: searchParams.get("status") ?? undefined,
+      message: searchParams.get("message") ?? undefined,
       access_token: hashParams.get("access_token") || searchParams.get("access_token") || undefined,
       refresh_token: hashParams.get("refresh_token") || searchParams.get("refresh_token") || undefined,
       provider_token: hashParams.get("provider_token") || searchParams.get("provider_token") || undefined,
@@ -233,6 +238,12 @@ export const App = () => {
   );
   const selectedNote = sortedNotes.find((note) => note.id === selectedNoteId) ?? sortedNotes[0] ?? null;
   const isAuthenticated = authState.status === "connected";
+  const authProviderLabel =
+    authState.provider === "google"
+      ? "Signed in with Google"
+      : authState.provider === "email"
+        ? "Signed in with email"
+        : "Signed in to Kai";
 
   const refreshAuthStatus = async () => {
     const [kaiStatusResult, googleStatusResult] = await Promise.allSettled([
@@ -414,6 +425,25 @@ export const App = () => {
     }
   };
 
+  const handleGoogleLogin = async () => {
+    setAuthError(null);
+    await startGoogleAuth("login");
+  };
+
+  const handleGoogleConnect = async () => {
+    setAuthError(null);
+    await startGoogleConnect();
+  };
+
+  const handleGoogleDisconnect = async () => {
+    try {
+      await disconnectGoogle();
+      await refreshAuthStatusRef.current();
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Google disconnect failed.");
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await logoutKai();
@@ -543,6 +573,26 @@ export const App = () => {
   }, []);
 
   useEffect(() => {
+    const refreshOnFocus = () => {
+      void refreshAuthStatusRef.current().catch(() => undefined);
+    };
+
+    const refreshOnVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void refreshAuthStatusRef.current().catch(() => undefined);
+      }
+    };
+
+    window.addEventListener("focus", refreshOnFocus);
+    document.addEventListener("visibilitychange", refreshOnVisibility);
+
+    return () => {
+      window.removeEventListener("focus", refreshOnFocus);
+      document.removeEventListener("visibilitychange", refreshOnVisibility);
+    };
+  }, []);
+
+  useEffect(() => {
     if (surface !== "palette" || !isTauriRuntime() || !isAuthenticated) {
       return;
     }
@@ -566,6 +616,16 @@ export const App = () => {
     const handleDeepLink = async (url: string) => {
       const payload = parseKaiAuthCallbackUrl(url);
       if (!payload) {
+        return;
+      }
+
+      if (payload.intent === "connect" && !payload.access_token) {
+        if (payload.status !== "success") {
+          setAuthError(payload.message ?? "Google connection failed.");
+          return;
+        }
+
+        await refreshAuthStatusRef.current();
         return;
       }
 
@@ -671,8 +731,10 @@ export const App = () => {
             sidebarCollapsed={sidebarCollapsed}
             authName={authState.name}
             authEmail={authState.email}
+            authProviderLabel={authProviderLabel}
             onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
-            onStartGoogleAuth={startGoogleAuth}
+            onConnectGoogle={handleGoogleConnect}
+            onDisconnectGoogle={handleGoogleDisconnect}
             onLogout={handleLogout}
             onSelectView={handleSelectView}
           />
@@ -680,7 +742,7 @@ export const App = () => {
           <AuthGate
             pending={authPending}
             error={authError}
-            onGoogleSignIn={startGoogleAuth}
+            onGoogleSignIn={handleGoogleLogin}
             onEmailSignIn={(payload) => handleEmailAuth(payload, "sign-in")}
             onEmailSignUp={(payload) => handleEmailAuth(payload, "sign-up")}
           />

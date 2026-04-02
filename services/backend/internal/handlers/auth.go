@@ -22,25 +22,35 @@ const (
 	supabaseTokenPath     = "/auth/v1/token"
 	supabaseUserPath      = "/auth/v1/user"
 	supabaseLogoutPath    = "/auth/v1/logout"
+	supabaseRESTPath      = "/rest/v1"
+
+	googleAuthorizeURL = "https://accounts.google.com/o/oauth2/v2/auth"
+	googleTokenURL     = "https://oauth2.googleapis.com/token"
+	googleUserInfoURL  = "https://openidconnect.googleapis.com/v1/userinfo"
 )
 
 type pendingAuthFlow struct {
 	State     string
 	Provider  string
+	Intent    string
 	CreatedAt time.Time
 }
 
 type authSession struct {
-	UserID               string
-	Email                string
-	Name                 string
-	Provider             string
-	AccessToken          string
-	RefreshToken         string
-	ProviderToken        string
-	ProviderRefreshToken string
-	TokenType            string
-	ExpiresAt            time.Time
+	UserID                 string
+	Email                  string
+	Name                   string
+	AuthProvider           string
+	AccessToken            string
+	RefreshToken           string
+	TokenType              string
+	ExpiresAt              time.Time
+	GoogleConnected        bool
+	GoogleEmail            string
+	GoogleName             string
+	GoogleProviderToken    string
+	GoogleRefreshToken     string
+	GoogleProviderIdentity string
 }
 
 type AuthHandler struct {
@@ -122,6 +132,27 @@ type supabaseUserIdentity struct {
 	Provider string `json:"provider"`
 }
 
+type connectedPlatformRecord struct {
+	UserID        string `json:"user_id"`
+	Provider      string `json:"provider"`
+	ExternalEmail string `json:"external_email"`
+	ExternalName  string `json:"external_name"`
+	Status        string `json:"status"`
+}
+
+type googleTokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+	Error        string `json:"error"`
+}
+
+type googleUserInfo struct {
+	Email string `json:"email"`
+	Name  string `json:"name"`
+}
+
 func NewAuthHandler(cfg config.Config) *AuthHandler {
 	return &AuthHandler{
 		cfg: cfg,
@@ -156,6 +187,7 @@ func (h *AuthHandler) GoogleStart() http.HandlerFunc {
 		h.pendingFlow = &pendingAuthFlow{
 			State:     state,
 			Provider:  "google",
+			Intent:    normalizeGoogleIntent(r.URL.Query().Get("intent")),
 			CreatedAt: time.Now(),
 		}
 		h.mu.Unlock()
@@ -170,9 +202,133 @@ func (h *AuthHandler) GoogleStart() http.HandlerFunc {
 	}
 }
 
+func (h *AuthHandler) GoogleConnectStart() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !h.isGoogleOAuthConfigured() {
+			writeJSON(w, http.StatusServiceUnavailable, authStatusResponse{
+				Provider: "google",
+				Status:   "error",
+				Message:  "Google OAuth is not configured for provider connection.",
+			})
+			return
+		}
+
+		h.mu.RLock()
+		session := h.session
+		h.mu.RUnlock()
+
+		if session == nil {
+			writeJSON(w, http.StatusUnauthorized, authStatusResponse{
+				Provider: "google",
+				Status:   "error",
+				Message:  "Sign in to Kai before connecting Google.",
+			})
+			return
+		}
+
+		state, err := randomState()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, authStatusResponse{
+				Provider: "google",
+				Status:   "error",
+				Message:  "Failed to start Google connection.",
+			})
+			return
+		}
+
+		h.mu.Lock()
+		h.pendingFlow = &pendingAuthFlow{
+			State:     state,
+			Provider:  "google",
+			Intent:    "connect",
+			CreatedAt: time.Now(),
+		}
+		h.mu.Unlock()
+
+		query := url.Values{}
+		query.Set("client_id", h.cfg.Google.ClientID)
+		query.Set("redirect_uri", h.cfg.Google.ConnectRedirectURL)
+		query.Set("response_type", "code")
+		query.Set("access_type", "offline")
+		query.Set("prompt", "consent")
+		query.Set("include_granted_scopes", "true")
+		query.Set("state", state)
+		query.Set("scope", strings.Join(h.cfg.Google.Scopes, " "))
+
+		http.Redirect(w, r, googleAuthorizeURL+"?"+query.Encode(), http.StatusFound)
+	}
+}
+
 func (h *AuthHandler) GoogleCallback() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writeOAuthHTML(w, "Complete Google sign-in", googleCallbackBodyHTML())
+	}
+}
+
+func (h *AuthHandler) GoogleConnectCallback() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		state := strings.TrimSpace(r.URL.Query().Get("state"))
+		code := strings.TrimSpace(r.URL.Query().Get("code"))
+		if errValue := strings.TrimSpace(r.URL.Query().Get("error")); errValue != "" {
+			writeOAuthHTML(w, "Google connection failed", oauthRedirectBodyHTML("google", "connect", "error", errValue))
+			return
+		}
+
+		flow := h.lookupPendingFlow(state, "google")
+		if flow == nil || flow.Intent != "connect" {
+			writeOAuthHTML(w, "Google connection failed", oauthRedirectBodyHTML("google", "connect", "error", "Google connection state was invalid or expired."))
+			return
+		}
+
+		h.mu.RLock()
+		session := h.session
+		h.mu.RUnlock()
+		if session == nil {
+			writeOAuthHTML(w, "Google connection failed", oauthRedirectBodyHTML("google", "connect", "error", "Sign in to Kai before connecting Google."))
+			return
+		}
+
+		token, err := h.exchangeGoogleCode(code)
+		if err != nil {
+			writeOAuthHTML(w, "Google connection failed", oauthRedirectBodyHTML("google", "connect", "error", err.Error()))
+			return
+		}
+
+		userInfo, err := h.fetchGoogleUserInfo(token.AccessToken)
+		if err != nil {
+			writeOAuthHTML(w, "Google connection failed", oauthRedirectBodyHTML("google", "connect", "error", err.Error()))
+			return
+		}
+
+		h.mu.Lock()
+		if h.session != nil {
+			h.session.GoogleConnected = true
+			h.session.GoogleEmail = firstNonEmpty(userInfo.Email, h.session.Email)
+			h.session.GoogleName = firstNonEmpty(userInfo.Name, h.session.Name)
+			h.session.GoogleProviderToken = token.AccessToken
+			h.session.GoogleRefreshToken = firstNonEmpty(token.RefreshToken, h.session.GoogleRefreshToken)
+			h.session.GoogleProviderIdentity = "google"
+		}
+		h.pendingFlow = nil
+		currentSession := h.session
+		h.mu.Unlock()
+
+		if currentSession == nil {
+			writeOAuthHTML(w, "Google connection failed", oauthRedirectBodyHTML("google", "connect", "error", "Kai session expired while connecting Google."))
+			return
+		}
+
+		if err := h.upsertConnectedPlatform(
+			currentSession.UserID,
+			"google",
+			firstNonEmpty(userInfo.Email, currentSession.Email),
+			firstNonEmpty(userInfo.Name, currentSession.Name),
+		); err != nil {
+			writeOAuthHTML(w, "Google connection failed", oauthRedirectBodyHTML("google", "connect", "error", err.Error()))
+			return
+		}
+
+		writeOAuthHTML(w, "Google connected", oauthRedirectBodyHTML("google", "connect", "success", "Google Calendar is now connected to Kai."))
 	}
 }
 
@@ -200,7 +356,7 @@ func (h *AuthHandler) GoogleStatus() http.HandlerFunc {
 			return
 		}
 
-		if session == nil || session.Provider != "google" {
+		if session == nil || !session.GoogleConnected {
 			writeJSON(w, http.StatusOK, authStatusResponse{
 				Provider: "google",
 				Status:   "disconnected",
@@ -211,8 +367,8 @@ func (h *AuthHandler) GoogleStatus() http.HandlerFunc {
 		writeJSON(w, http.StatusOK, authStatusResponse{
 			Provider: "google",
 			Status:   "connected",
-			Email:    session.Email,
-			Name:     session.Name,
+			Email:    firstNonEmpty(session.GoogleEmail, session.Email),
+			Name:     firstNonEmpty(session.GoogleName, session.Name),
 		})
 	}
 }
@@ -223,7 +379,7 @@ func (h *AuthHandler) GoogleDisconnect() http.HandlerFunc {
 		session := h.session
 		h.mu.Unlock()
 
-		if session == nil || session.Provider != "google" {
+		if session == nil || !session.GoogleConnected {
 			writeJSON(w, http.StatusOK, authStatusResponse{
 				Provider: "google",
 				Status:   "disconnected",
@@ -231,16 +387,20 @@ func (h *AuthHandler) GoogleDisconnect() http.HandlerFunc {
 			return
 		}
 
-		if session.AccessToken != "" {
-			_ = h.supabaseAuthorizedRequest(http.MethodPost, supabaseLogoutPath, session.AccessToken, map[string]any{
-				"scope": "local",
-			})
-		}
-
 		h.mu.Lock()
-		h.session = nil
-		h.pendingFlow = nil
+		if h.session != nil {
+			h.session.GoogleConnected = false
+			h.session.GoogleEmail = ""
+			h.session.GoogleName = ""
+			h.session.GoogleProviderToken = ""
+			h.session.GoogleRefreshToken = ""
+			h.session.GoogleProviderIdentity = ""
+		}
 		h.mu.Unlock()
+
+		if session.UserID != "" {
+			_ = h.deleteConnectedPlatform(session.UserID, "google")
+		}
 
 		writeJSON(w, http.StatusOK, authStatusResponse{
 			Provider: "google",
@@ -313,7 +473,15 @@ func (h *AuthHandler) EmailSignUp() http.HandlerFunc {
 			return
 		}
 
-		session := newSessionFromSupabase("email", response.AccessToken, response.RefreshToken, response.ProviderToken, response.ProviderRefreshToken, response.TokenType, response.ExpiresIn, response.User)
+		session := newSessionFromSupabase("email", response.AccessToken, response.RefreshToken, response.TokenType, response.ExpiresIn, response.User)
+		if err := h.hydrateConnectedPlatforms(session); err != nil {
+			writeJSON(w, http.StatusBadGateway, authStatusResponse{
+				Provider: "kai",
+				Status:   "error",
+				Message:  err.Error(),
+			})
+			return
+		}
 
 		h.mu.Lock()
 		h.session = session
@@ -371,13 +539,17 @@ func (h *AuthHandler) finalizeAuthSession(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if payload.FlowState != "" && !h.isValidFlowState(payload.FlowState, "google") {
-		writeJSON(w, http.StatusBadRequest, authStatusResponse{
-			Provider: "google",
-			Status:   "error",
-			Message:  "Google sign-in state was invalid or expired.",
-		})
-		return
+	var flow *pendingAuthFlow
+	if payload.FlowState != "" {
+		flow = h.lookupPendingFlow(payload.FlowState, "google")
+		if flow == nil {
+			writeJSON(w, http.StatusBadRequest, authStatusResponse{
+				Provider: "google",
+				Status:   "error",
+				Message:  "Google sign-in state was invalid or expired.",
+			})
+			return
+		}
 	}
 
 	user, err := h.fetchSupabaseUser(payload.AccessToken)
@@ -390,34 +562,112 @@ func (h *AuthHandler) finalizeAuthSession(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	provider := strings.TrimSpace(payload.Provider)
-	if provider == "" {
-		provider = currentProvider(user)
-	}
-	if provider == "" {
-		provider = fallbackProvider
+	intent := "login"
+	if flow != nil && flow.Intent != "" {
+		intent = flow.Intent
 	}
 
-	session := newSessionFromSupabase(
-		provider,
-		payload.AccessToken,
-		payload.RefreshToken,
-		payload.ProviderToken,
-		payload.ProviderRefreshToken,
-		payload.TokenType,
-		payload.ExpiresIn,
-		user,
-	)
+	var session *authSession
 
-	h.mu.Lock()
-	h.session = session
-	if payload.FlowState != "" {
-		h.pendingFlow = nil
+	if intent == "connect" {
+		h.mu.RLock()
+		currentSession := h.session
+		h.mu.RUnlock()
+		if currentSession == nil {
+			writeJSON(w, http.StatusUnauthorized, authStatusResponse{
+				Provider: "google",
+				Status:   "error",
+				Message:  "Sign in to Kai before connecting Google.",
+			})
+			return
+		}
+
+		nextSession := *currentSession
+		nextSession.GoogleConnected = true
+		nextSession.GoogleEmail = user.Email
+		nextSession.GoogleName = pickDisplayName(user)
+		nextSession.GoogleProviderToken = payload.ProviderToken
+		nextSession.GoogleRefreshToken = payload.ProviderRefreshToken
+		nextSession.GoogleProviderIdentity = currentProvider(user)
+		if err := h.upsertConnectedPlatform(
+			nextSession.UserID,
+			"google",
+			firstNonEmpty(user.Email, nextSession.Email),
+			firstNonEmpty(pickDisplayName(user), nextSession.Name),
+		); err != nil {
+			writeJSON(w, http.StatusBadGateway, authStatusResponse{
+				Provider: "google",
+				Status:   "error",
+				Message:  err.Error(),
+			})
+			return
+		}
+
+		h.mu.Lock()
+		h.session = &nextSession
+		if payload.FlowState != "" {
+			h.pendingFlow = nil
+		}
+		session = h.session
+		h.mu.Unlock()
+	} else {
+		authProvider := strings.TrimSpace(payload.Provider)
+		if authProvider == "" {
+			authProvider = currentProvider(user)
+		}
+		if authProvider == "" {
+			authProvider = fallbackProvider
+		}
+
+		session = newSessionFromSupabase(
+			authProvider,
+			payload.AccessToken,
+			payload.RefreshToken,
+			payload.TokenType,
+			payload.ExpiresIn,
+			user,
+		)
+		if authProvider == "google" || payload.ProviderToken != "" {
+			session.GoogleConnected = true
+			session.GoogleEmail = user.Email
+			session.GoogleName = pickDisplayName(user)
+			session.GoogleProviderToken = payload.ProviderToken
+			session.GoogleRefreshToken = payload.ProviderRefreshToken
+			session.GoogleProviderIdentity = currentProvider(user)
+		}
+		if err := h.hydrateConnectedPlatforms(session); err != nil {
+			writeJSON(w, http.StatusBadGateway, authStatusResponse{
+				Provider: authProvider,
+				Status:   "error",
+				Message:  err.Error(),
+			})
+			return
+		}
+		if session.GoogleConnected {
+			if err := h.upsertConnectedPlatform(
+				session.UserID,
+				"google",
+				firstNonEmpty(session.GoogleEmail, session.Email),
+				firstNonEmpty(session.GoogleName, session.Name),
+			); err != nil {
+				writeJSON(w, http.StatusBadGateway, authStatusResponse{
+					Provider: authProvider,
+					Status:   "error",
+					Message:  err.Error(),
+				})
+				return
+			}
+		}
+		h.mu.Lock()
+		h.session = session
+		if payload.FlowState != "" {
+			h.pendingFlow = nil
+		}
+		h.mu.Unlock()
 	}
-	h.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, authStatusResponse{
-		Provider: provider,
+		Provider: session.AuthProvider,
 		Status:   "connected",
 		Email:    session.Email,
 		Name:     session.Name,
@@ -462,7 +712,15 @@ func (h *AuthHandler) EmailSignIn() http.HandlerFunc {
 			return
 		}
 
-		session := newSessionFromSupabase("email", response.AccessToken, response.RefreshToken, response.ProviderToken, response.ProviderRefreshToken, response.TokenType, response.ExpiresIn, response.User)
+		session := newSessionFromSupabase("email", response.AccessToken, response.RefreshToken, response.TokenType, response.ExpiresIn, response.User)
+		if err := h.hydrateConnectedPlatforms(session); err != nil {
+			writeJSON(w, http.StatusBadGateway, authStatusResponse{
+				Provider: "kai",
+				Status:   "error",
+				Message:  err.Error(),
+			})
+			return
+		}
 
 		h.mu.Lock()
 		h.session = session
@@ -498,7 +756,7 @@ func (h *AuthHandler) Me() http.HandlerFunc {
 		}
 
 		writeJSON(w, http.StatusOK, authStatusResponse{
-			Provider: session.Provider,
+			Provider: session.AuthProvider,
 			Status:   "connected",
 			Email:    session.Email,
 			Name:     session.Name,
@@ -555,9 +813,13 @@ func (h *AuthHandler) isSupabaseConfigured() bool {
 	return h.cfg.Supabase.URL != "" && h.cfg.Supabase.AnonKey != "" && h.cfg.Supabase.RedirectURL != ""
 }
 
-func (h *AuthHandler) isValidFlowState(state string, provider string) bool {
+func (h *AuthHandler) isGoogleOAuthConfigured() bool {
+	return h.cfg.Google.ClientID != "" && h.cfg.Google.ClientSecret != "" && h.cfg.Google.ConnectRedirectURL != ""
+}
+
+func (h *AuthHandler) lookupPendingFlow(state string, provider string) *pendingAuthFlow {
 	if state == "" {
-		return false
+		return nil
 	}
 
 	h.mu.RLock()
@@ -565,14 +827,18 @@ func (h *AuthHandler) isValidFlowState(state string, provider string) bool {
 	h.mu.RUnlock()
 
 	if flow == nil {
-		return false
+		return nil
 	}
 
 	if flow.Provider != provider || flow.State != state {
-		return false
+		return nil
 	}
 
-	return time.Since(flow.CreatedAt) <= 10*time.Minute
+	if time.Since(flow.CreatedAt) > 10*time.Minute {
+		return nil
+	}
+
+	return flow
 }
 
 func (h *AuthHandler) ensureSessionFresh() (*authSession, error) {
@@ -592,7 +858,7 @@ func (h *AuthHandler) ensureSessionFresh() (*authSession, error) {
 		return session, nil
 	}
 
-	refreshed, err := h.refreshSupabaseSession(session.RefreshToken)
+	refreshed, err := h.refreshSupabaseSession(session)
 	if err != nil {
 		return nil, err
 	}
@@ -605,12 +871,12 @@ func (h *AuthHandler) ensureSessionFresh() (*authSession, error) {
 	return updated, nil
 }
 
-func (h *AuthHandler) refreshSupabaseSession(refreshToken string) (*authSession, error) {
+func (h *AuthHandler) refreshSupabaseSession(session *authSession) (*authSession, error) {
 	query := url.Values{}
 	query.Set("grant_type", "refresh_token")
 
 	body := map[string]any{
-		"refresh_token": refreshToken,
+		"refresh_token": session.RefreshToken,
 	}
 
 	var response supabaseSessionResponse
@@ -631,7 +897,86 @@ func (h *AuthHandler) refreshSupabaseSession(refreshToken string) (*authSession,
 		user = fetchedUser
 	}
 
-	return newSessionFromSupabase(currentProvider(user), response.AccessToken, firstNonEmpty(response.RefreshToken, refreshToken), response.ProviderToken, response.ProviderRefreshToken, response.TokenType, response.ExpiresIn, user), nil
+	refreshed := newSessionFromSupabase(session.AuthProvider, response.AccessToken, firstNonEmpty(response.RefreshToken, session.RefreshToken), response.TokenType, response.ExpiresIn, user)
+	refreshed.GoogleConnected = session.GoogleConnected
+	refreshed.GoogleEmail = session.GoogleEmail
+	refreshed.GoogleName = session.GoogleName
+	refreshed.GoogleProviderToken = session.GoogleProviderToken
+	refreshed.GoogleRefreshToken = session.GoogleRefreshToken
+	refreshed.GoogleProviderIdentity = session.GoogleProviderIdentity
+	if err := h.hydrateConnectedPlatforms(refreshed); err != nil {
+		return nil, err
+	}
+	return refreshed, nil
+}
+
+func (h *AuthHandler) hydrateConnectedPlatforms(session *authSession) error {
+	if session == nil || session.UserID == "" {
+		return nil
+	}
+
+	records, err := h.fetchConnectedPlatforms(session.UserID)
+	if err != nil {
+		return err
+	}
+
+	for _, record := range records {
+		if record.Provider != "google" || record.Status != "connected" {
+			continue
+		}
+
+		session.GoogleConnected = true
+		session.GoogleEmail = firstNonEmpty(record.ExternalEmail, session.GoogleEmail)
+		session.GoogleName = firstNonEmpty(record.ExternalName, session.GoogleName)
+	}
+
+	return nil
+}
+
+func (h *AuthHandler) fetchConnectedPlatforms(userID string) ([]connectedPlatformRecord, error) {
+	var records []connectedPlatformRecord
+	query := url.Values{}
+	query.Set("user_id", "eq."+userID)
+	query.Set("select", "user_id,provider,external_email,external_name,status")
+
+	if err := h.supabaseAdminJSONRequest(http.MethodGet, "/connected_platforms", query, nil, &records); err != nil {
+		return nil, err
+	}
+
+	return records, nil
+}
+
+func (h *AuthHandler) upsertConnectedPlatform(userID string, provider string, externalEmail string, externalName string) error {
+	if userID == "" || provider == "" {
+		return nil
+	}
+
+	body := []connectedPlatformRecord{
+		{
+			UserID:        userID,
+			Provider:      provider,
+			ExternalEmail: externalEmail,
+			ExternalName:  externalName,
+			Status:        "connected",
+		},
+	}
+
+	query := url.Values{}
+	query.Set("on_conflict", "user_id,provider")
+
+	return h.supabaseAdminJSONRequest(http.MethodPost, "/connected_platforms", query, body, nil)
+}
+
+func (h *AuthHandler) deleteConnectedPlatform(userID string, provider string) error {
+	if userID == "" || provider == "" {
+		return nil
+	}
+
+	query := url.Values{}
+	query.Set("user_id", "eq."+userID)
+	query.Set("provider", "eq."+provider)
+
+	return h.supabaseAdminJSONRequest(http.MethodDelete, "/connected_platforms", query, nil, nil)
 }
 
 func (h *AuthHandler) fetchSupabaseUser(accessToken string) (*supabaseUser, error) {
@@ -668,6 +1013,83 @@ func (h *AuthHandler) fetchSupabaseUser(accessToken string) (*supabaseUser, erro
 	}
 
 	return &user, nil
+}
+
+func (h *AuthHandler) exchangeGoogleCode(code string) (*googleTokenResponse, error) {
+	if strings.TrimSpace(code) == "" {
+		return nil, fmt.Errorf("google did not return an authorization code")
+	}
+
+	payload := url.Values{}
+	payload.Set("code", code)
+	payload.Set("client_id", h.cfg.Google.ClientID)
+	payload.Set("client_secret", h.cfg.Google.ClientSecret)
+	payload.Set("redirect_uri", h.cfg.Google.ConnectRedirectURL)
+	payload.Set("grant_type", "authorization_code")
+
+	request, err := http.NewRequest(http.MethodPost, googleTokenURL, strings.NewReader(payload.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Google token request: %w", err)
+	}
+
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	response, err := h.client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reach Google token endpoint: %w", err)
+	}
+	defer response.Body.Close()
+
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read Google token response: %w", err)
+	}
+
+	if response.StatusCode >= http.StatusBadRequest {
+		return nil, fmt.Errorf("google token exchange failed with HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var token googleTokenResponse
+	if err := json.Unmarshal(body, &token); err != nil {
+		return nil, fmt.Errorf("failed to decode Google token response: %w", err)
+	}
+
+	if token.AccessToken == "" {
+		return nil, fmt.Errorf("google token exchange returned no access token")
+	}
+
+	return &token, nil
+}
+
+func (h *AuthHandler) fetchGoogleUserInfo(accessToken string) (*googleUserInfo, error) {
+	request, err := http.NewRequest(http.MethodGet, googleUserInfoURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Google userinfo request: %w", err)
+	}
+
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+
+	response, err := h.client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reach Google userinfo endpoint: %w", err)
+	}
+	defer response.Body.Close()
+
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read Google userinfo response: %w", err)
+	}
+
+	if response.StatusCode >= http.StatusBadRequest {
+		return nil, fmt.Errorf("google userinfo request failed with HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var userInfo googleUserInfo
+	if err := json.Unmarshal(body, &userInfo); err != nil {
+		return nil, fmt.Errorf("failed to decode Google userinfo response: %w", err)
+	}
+
+	return &userInfo, nil
 }
 
 func (h *AuthHandler) supabaseJSONRequest(method string, path string, query url.Values, body any, target any) error {
@@ -765,23 +1187,80 @@ func (h *AuthHandler) supabaseAuthorizedRequest(method string, path string, acce
 	return nil
 }
 
-func newSessionFromSupabase(provider string, accessToken string, refreshToken string, providerToken string, providerRefreshToken string, tokenType string, expiresIn int, user *supabaseUser) *authSession {
+func (h *AuthHandler) supabaseAdminJSONRequest(method string, path string, query url.Values, body any, target any) error {
+	if h.cfg.Supabase.URL == "" || h.cfg.Supabase.ServiceRoleKey == "" {
+		return fmt.Errorf("supabase service role is not configured")
+	}
+
+	endpoint := h.cfg.Supabase.URL + supabaseRESTPath + path
+	if len(query) > 0 {
+		endpoint += "?" + query.Encode()
+	}
+
+	var payload io.Reader
+	if body != nil {
+		buffer, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("failed to encode Supabase admin request body: %w", err)
+		}
+		payload = strings.NewReader(string(buffer))
+	}
+
+	request, err := http.NewRequest(method, endpoint, payload)
+	if err != nil {
+		return fmt.Errorf("failed to create Supabase admin request: %w", err)
+	}
+
+	request.Header.Set("apikey", h.cfg.Supabase.ServiceRoleKey)
+	request.Header.Set("Authorization", "Bearer "+h.cfg.Supabase.ServiceRoleKey)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Prefer", "return=minimal,resolution=merge-duplicates")
+
+	response, err := h.client.Do(request)
+	if err != nil {
+		return fmt.Errorf("failed to reach Supabase admin api: %w", err)
+	}
+	defer response.Body.Close()
+
+	responseBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read Supabase admin response: %w", err)
+	}
+
+	if response.StatusCode >= http.StatusBadRequest {
+		message := strings.TrimSpace(string(responseBody))
+		if message == "" {
+			message = "unknown Supabase admin error"
+		}
+		return fmt.Errorf("supabase admin request failed with HTTP %d: %s", response.StatusCode, message)
+	}
+
+	if target == nil || len(responseBody) == 0 {
+		return nil
+	}
+
+	if err := json.Unmarshal(responseBody, target); err != nil {
+		return fmt.Errorf("failed to decode Supabase admin response: %w", err)
+	}
+
+	return nil
+}
+
+func newSessionFromSupabase(authProvider string, accessToken string, refreshToken string, tokenType string, expiresIn int, user *supabaseUser) *authSession {
 	expiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
 	if expiresIn <= 0 {
 		expiresAt = time.Time{}
 	}
 
 	return &authSession{
-		UserID:               user.ID,
-		Email:                user.Email,
-		Name:                 pickDisplayName(user),
-		Provider:             provider,
-		AccessToken:          accessToken,
-		RefreshToken:         refreshToken,
-		ProviderToken:        providerToken,
-		ProviderRefreshToken: providerRefreshToken,
-		TokenType:            tokenType,
-		ExpiresAt:            expiresAt,
+		UserID:       user.ID,
+		Email:        user.Email,
+		Name:         pickDisplayName(user),
+		AuthProvider: authProvider,
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		TokenType:    tokenType,
+		ExpiresAt:    expiresAt,
 	}
 }
 
@@ -808,6 +1287,15 @@ func currentProvider(user *supabaseUser) string {
 	}
 
 	return "email"
+}
+
+func normalizeGoogleIntent(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "connect":
+		return "connect"
+	default:
+		return "login"
+	}
 }
 
 func firstNonEmpty(values ...string) string {
@@ -965,4 +1453,32 @@ func rootAuthLandingBodyHTML() string {
         history.replaceState(null, "", window.location.pathname);
       }
     </script>`
+}
+
+func oauthRedirectBodyHTML(provider string, intent string, status string, message string) string {
+	callbackURL := fmt.Sprintf(
+		"kai://auth/callback?provider=%s&intent=%s&status=%s&message=%s",
+		url.QueryEscape(provider),
+		url.QueryEscape(intent),
+		url.QueryEscape(status),
+		url.QueryEscape(message),
+	)
+
+	return fmt.Sprintf(`<p id="status">%s</p>
+    <p class="muted" id="detail">%s</p>
+    <script>
+      const callbackUrl = %q;
+      window.location.replace(callbackUrl);
+      setTimeout(() => {
+        const statusNode = document.getElementById("status");
+        const detailNode = document.getElementById("detail");
+        statusNode.textContent = %q;
+        detailNode.textContent = "If Kai did not reopen automatically, return to the app manually.";
+      }, 1200);
+    </script>`,
+		map[bool]string{true: "Google connected", false: "Google connection failed"}[status == "success"],
+		message,
+		callbackURL,
+		map[bool]string{true: "Still waiting for Kai to reopen...", false: "Kai did not reopen automatically."}[status == "success"],
+	)
 }

@@ -20,14 +20,20 @@ func New(cfg config.Config) http.Handler {
 	router.Use(localCORS)
 
 	router.Get("/", authHandler.AuthLanding())
+	router.Get("/favicon.ico", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
 	router.Get("/health", handlers.Health())
 
 	router.Route("/auth", func(r chi.Router) {
 		r.Get("/google/start", authHandler.GoogleStart())
+		r.Get("/google/connect/start", authHandler.GoogleConnectStart())
 		r.Get("/google/callback", authHandler.GoogleCallback())
+		r.Get("/google/connect/callback", authHandler.GoogleConnectCallback())
 		r.Post("/google/session", authHandler.GoogleFinalize())
 		r.Post("/session", authHandler.FinalizeSession())
 		r.Get("/google/status", authHandler.GoogleStatus())
+		r.Post("/google/disconnect", authHandler.GoogleDisconnect())
 		r.Get("/email/confirmed", authHandler.EmailConfirmed())
 		r.Post("/email/sign-up", authHandler.EmailSignUp())
 		r.Post("/email/sign-in", authHandler.EmailSignIn())
