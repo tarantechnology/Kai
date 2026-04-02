@@ -22,6 +22,20 @@ export interface EmailAuthPayload {
   name?: string;
 }
 
+export interface AuthCallbackPayload {
+  provider?: string;
+  flow_state?: string;
+  access_token?: string;
+  refresh_token?: string;
+  provider_token?: string;
+  provider_refresh_token?: string;
+  token_type?: string;
+  expires_in?: number;
+  type?: string;
+  error?: string;
+  error_description?: string;
+}
+
 const BACKEND_BASE_URL = "http://127.0.0.1:8080";
 
 export const startGoogleAuth = async () => {
@@ -56,7 +70,7 @@ export const fetchKaiAuthStatus = async (): Promise<KaiAuthStatus> => {
   return (await response.json()) as KaiAuthStatus;
 };
 
-const postAuthJSON = async (path: string, payload: EmailAuthPayload): Promise<KaiAuthStatus> => {
+const postAuthJSON = async <TPayload extends object>(path: string, payload: TPayload): Promise<KaiAuthStatus> => {
   const response = await fetch(`${BACKEND_BASE_URL}${path}`, {
     method: "POST",
     headers: {
@@ -77,6 +91,8 @@ const postAuthJSON = async (path: string, payload: EmailAuthPayload): Promise<Ka
 export const signInWithEmail = (payload: EmailAuthPayload) => postAuthJSON("/auth/email/sign-in", payload);
 
 export const signUpWithEmail = (payload: EmailAuthPayload) => postAuthJSON("/auth/email/sign-up", payload);
+
+export const completeAuthSession = (payload: AuthCallbackPayload) => postAuthJSON("/auth/session", payload);
 
 export const logoutKai = async (): Promise<void> => {
   const response = await fetch(`${BACKEND_BASE_URL}/auth/logout`, {

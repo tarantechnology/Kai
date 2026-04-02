@@ -31,7 +31,14 @@
       "csp": null
     }
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["kai"]
+      }
+    }
+  },
   "bundle": {
-    "active": false
+    "active": true
   }
 }

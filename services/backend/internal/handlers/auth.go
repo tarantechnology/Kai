@@ -70,6 +70,7 @@ type authStatusResponse struct {
 }
 
 type googleFinalizeRequest struct {
+	Provider             string `json:"provider"`
 	FlowState            string `json:"flow_state"`
 	AccessToken          string `json:"access_token"`
 	RefreshToken         string `json:"refresh_token"`
@@ -177,80 +178,13 @@ func (h *AuthHandler) GoogleCallback() http.HandlerFunc {
 
 func (h *AuthHandler) GoogleFinalize() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, authStatusResponse{
-				Provider: "google",
-				Status:   "error",
-				Message:  "Method not allowed.",
-			})
-			return
-		}
+		h.finalizeAuthSession(w, r, "google")
+	}
+}
 
-		var payload googleFinalizeRequest
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			writeJSON(w, http.StatusBadRequest, authStatusResponse{
-				Provider: "google",
-				Status:   "error",
-				Message:  "Invalid Google auth payload.",
-			})
-			return
-		}
-
-		if payload.Error != "" {
-			message := payload.ErrorDescription
-			if message == "" {
-				message = payload.Error
-			}
-
-			writeJSON(w, http.StatusBadRequest, authStatusResponse{
-				Provider: "google",
-				Status:   "error",
-				Message:  message,
-			})
-			return
-		}
-
-		if !h.isValidFlowState(payload.FlowState, "google") {
-			writeJSON(w, http.StatusBadRequest, authStatusResponse{
-				Provider: "google",
-				Status:   "error",
-				Message:  "Google sign-in state was invalid or expired.",
-			})
-			return
-		}
-
-		if payload.AccessToken == "" {
-			writeJSON(w, http.StatusBadRequest, authStatusResponse{
-				Provider: "google",
-				Status:   "error",
-				Message:  "Google sign-in returned no Supabase access token.",
-			})
-			return
-		}
-
-		user, err := h.fetchSupabaseUser(payload.AccessToken)
-		if err != nil {
-			writeJSON(w, http.StatusBadGateway, authStatusResponse{
-				Provider: "google",
-				Status:   "error",
-				Message:  err.Error(),
-			})
-			return
-		}
-
-		session := newSessionFromSupabase("google", payload.AccessToken, payload.RefreshToken, payload.ProviderToken, payload.ProviderRefreshToken, payload.TokenType, payload.ExpiresIn, user)
-
-		h.mu.Lock()
-		h.session = session
-		h.pendingFlow = nil
-		h.mu.Unlock()
-
-		writeJSON(w, http.StatusOK, authStatusResponse{
-			Provider: "google",
-			Status:   "connected",
-			Email:    session.Email,
-			Name:     session.Name,
-		})
+func (h *AuthHandler) FinalizeSession() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		h.finalizeAuthSession(w, r, "kai")
 	}
 }
 
@@ -279,6 +213,38 @@ func (h *AuthHandler) GoogleStatus() http.HandlerFunc {
 			Status:   "connected",
 			Email:    session.Email,
 			Name:     session.Name,
+		})
+	}
+}
+
+func (h *AuthHandler) GoogleDisconnect() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		h.mu.Lock()
+		session := h.session
+		h.mu.Unlock()
+
+		if session == nil || session.Provider != "google" {
+			writeJSON(w, http.StatusOK, authStatusResponse{
+				Provider: "google",
+				Status:   "disconnected",
+			})
+			return
+		}
+
+		if session.AccessToken != "" {
+			_ = h.supabaseAuthorizedRequest(http.MethodPost, supabaseLogoutPath, session.AccessToken, map[string]any{
+				"scope": "local",
+			})
+		}
+
+		h.mu.Lock()
+		h.session = nil
+		h.pendingFlow = nil
+		h.mu.Unlock()
+
+		writeJSON(w, http.StatusOK, authStatusResponse{
+			Provider: "google",
+			Status:   "disconnected",
 		})
 	}
 }
@@ -360,6 +326,102 @@ func (h *AuthHandler) EmailSignUp() http.HandlerFunc {
 			Name:     session.Name,
 		})
 	}
+}
+
+func (h *AuthHandler) finalizeAuthSession(w http.ResponseWriter, r *http.Request, fallbackProvider string) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, authStatusResponse{
+			Provider: fallbackProvider,
+			Status:   "error",
+			Message:  "Method not allowed.",
+		})
+		return
+	}
+
+	var payload googleFinalizeRequest
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeJSON(w, http.StatusBadRequest, authStatusResponse{
+			Provider: fallbackProvider,
+			Status:   "error",
+			Message:  "Invalid auth payload.",
+		})
+		return
+	}
+
+	if payload.Error != "" {
+		message := payload.ErrorDescription
+		if message == "" {
+			message = payload.Error
+		}
+
+		writeJSON(w, http.StatusBadRequest, authStatusResponse{
+			Provider: fallbackProvider,
+			Status:   "error",
+			Message:  message,
+		})
+		return
+	}
+
+	if payload.AccessToken == "" {
+		writeJSON(w, http.StatusBadRequest, authStatusResponse{
+			Provider: fallbackProvider,
+			Status:   "error",
+			Message:  "Supabase returned no access token to Kai.",
+		})
+		return
+	}
+
+	if payload.FlowState != "" && !h.isValidFlowState(payload.FlowState, "google") {
+		writeJSON(w, http.StatusBadRequest, authStatusResponse{
+			Provider: "google",
+			Status:   "error",
+			Message:  "Google sign-in state was invalid or expired.",
+		})
+		return
+	}
+
+	user, err := h.fetchSupabaseUser(payload.AccessToken)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, authStatusResponse{
+			Provider: fallbackProvider,
+			Status:   "error",
+			Message:  err.Error(),
+		})
+		return
+	}
+
+	provider := strings.TrimSpace(payload.Provider)
+	if provider == "" {
+		provider = currentProvider(user)
+	}
+	if provider == "" {
+		provider = fallbackProvider
+	}
+
+	session := newSessionFromSupabase(
+		provider,
+		payload.AccessToken,
+		payload.RefreshToken,
+		payload.ProviderToken,
+		payload.ProviderRefreshToken,
+		payload.TokenType,
+		payload.ExpiresIn,
+		user,
+	)
+
+	h.mu.Lock()
+	h.session = session
+	if payload.FlowState != "" {
+		h.pendingFlow = nil
+	}
+	h.mu.Unlock()
+
+	writeJSON(w, http.StatusOK, authStatusResponse{
+		Provider: provider,
+		Status:   "connected",
+		Email:    session.Email,
+		Name:     session.Name,
+	})
 }
 
 func (h *AuthHandler) EmailSignIn() http.HandlerFunc {
@@ -844,10 +906,10 @@ func googleCallbackBodyHTML() string {
         statusNode.className = "error";
         detailNode.textContent = "Supabase did not return an access token to Kai.";
       } else {
-        fetch("/auth/google/session", {
+        fetch("/auth/session", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
+          body: JSON.stringify({ ...payload, provider: "google" })
         })
           .then(async (response) => {
             const data = await response.json().catch(() => ({}));

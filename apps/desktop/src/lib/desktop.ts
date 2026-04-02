@@ -1,6 +1,7 @@
 import type { DesktopSurface } from "./types";
 
 const SURFACE_EVENT = "kai://surface";
+const AUTH_CALLBACK_EVENT = "kai://auth-callback";
 
 declare global {
   interface Window {
@@ -10,6 +11,10 @@ declare global {
 
 interface SurfacePayload {
   surface: DesktopSurface;
+}
+
+interface AuthCallbackPayload {
+  url: string;
 }
 
 // this checks whether react is running inside tauri or just in a plain browser dev session.
@@ -50,6 +55,33 @@ export const warmLocalParser = async () => {
 
   const { invoke } = await import("@tauri-apps/api/core");
   await invoke("warm_ollama_model");
+};
+
+export const consumeAuthCallbackUrl = async () => {
+  if (!isTauriRuntime()) {
+    return null;
+  }
+
+  const { invoke } = await import("@tauri-apps/api/core");
+  return (await invoke<string | null>("consume_auth_callback_url")) ?? null;
+};
+
+export const bindAuthCallbackListener = async (onUrl: (url: string) => void) => {
+  if (!isTauriRuntime()) {
+    return () => undefined;
+  }
+
+  const { listen } = await import("@tauri-apps/api/event");
+
+  const unlisten = await listen<AuthCallbackPayload>(AUTH_CALLBACK_EVENT, (event) => {
+    if (event.payload.url) {
+      onUrl(event.payload.url);
+    }
+  });
+
+  return () => {
+    unlisten();
+  };
 };
 
 export const bindSurfaceListener = async (onSurface: (surface: DesktopSurface) => void) => {

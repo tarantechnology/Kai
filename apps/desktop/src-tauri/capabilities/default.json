@@ -3,6 +3,5 @@
   "identifier": "main-capability",
   "description": "Capability for the Kai desktop window.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "deep-link:default"]
 }
-

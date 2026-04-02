@@ -45,8 +45,8 @@ func loadSupabaseConfig() SupabaseConfig {
 		URL:              strings.TrimRight(strings.TrimSpace(os.Getenv("SUPABASE_URL")), "/"),
 		AnonKey:          strings.TrimSpace(os.Getenv("SUPABASE_ANON_KEY")),
 		ServiceRoleKey:   strings.TrimSpace(os.Getenv("SUPABASE_SERVICE_ROLE_KEY")),
-		RedirectURL:      redirectURL,
-		EmailRedirectURL: emailRedirectURL,
+		RedirectURL:      defaultIfEmpty(redirectURL, "kai://auth/callback"),
+		EmailRedirectURL: defaultIfEmpty(emailRedirectURL, "kai://auth/callback"),
 	}
 }
 
@@ -89,4 +89,12 @@ func loadDotEnv() {
 
 		return
 	}
+}
+
+func defaultIfEmpty(value string, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+
+	return value
 }

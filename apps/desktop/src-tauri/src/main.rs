@@ -7,12 +7,14 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, Size, WebviewWindow, WindowEvent};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 const PALETTE_WIDTH: f64 = 980.0;
 const PALETTE_COLLAPSED_HEIGHT: f64 = 88.0;
 const DASHBOARD_WIDTH: f64 = 1280.0;
 const DASHBOARD_HEIGHT: f64 = 860.0;
+const AUTH_DEEP_LINK_EVENT: &str = "kai://auth-callback";
 
 // this enum is the native source of truth for which surface the window should show.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,10 +25,16 @@ enum SurfaceKind {
 
 // tauri stores app-wide state here so shortcut handlers know what is currently open.
 struct ActiveSurface(Mutex<SurfaceKind>);
+struct PendingAuthCallback(Mutex<Option<String>>);
 
 #[derive(Clone, Serialize)]
 struct SurfacePayload {
     surface: &'static str,
+}
+
+#[derive(Clone, Serialize)]
+struct AuthCallbackPayload {
+    url: String,
 }
 
 #[tauri::command]
@@ -45,6 +53,17 @@ fn center_main_window(app: AppHandle) -> Result<(), String> {
         .ok_or_else(|| "main window not available".to_string())?;
 
     window.center().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn consume_auth_callback_url(app: AppHandle) -> Result<Option<String>, String> {
+    let pending = app.state::<PendingAuthCallback>();
+    let mut pending = pending
+        .0
+        .lock()
+        .expect("pending auth callback state poisoned");
+
+    Ok(pending.take())
 }
 
 #[tauri::command]
@@ -162,6 +181,22 @@ fn toggle_surface(app: &AppHandle, surface: SurfaceKind) -> tauri::Result<()> {
     Ok(())
 }
 
+fn capture_auth_callback(app: &AppHandle, url: String) -> tauri::Result<()> {
+    {
+        let pending = app.state::<PendingAuthCallback>();
+        let mut pending = pending
+            .0
+            .lock()
+            .expect("pending auth callback state poisoned");
+        *pending = Some(url.clone());
+    }
+
+    let _ = toggle_surface(app, SurfaceKind::Dashboard);
+    app.emit(AUTH_DEEP_LINK_EVENT, AuthCallbackPayload { url })?;
+
+    Ok(())
+}
+
 fn main() {
     // these are the global shortcuts that can open kai from anywhere on the machine.
     let palette_shortcut = Shortcut::new(Some(Modifiers::SUPER), Code::Slash);
@@ -171,16 +206,37 @@ fn main() {
 
     tauri::Builder::default()
         .manage(ActiveSurface(Mutex::new(SurfaceKind::Palette)))
+        .manage(PendingAuthCallback(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             hide_main_window,
             center_main_window,
+            consume_auth_callback_url,
             open_external_url,
             set_palette_height,
             parse_command_with_ollama,
             warm_ollama_model
         ])
+        .plugin(tauri_plugin_deep_link::init())
         .setup(move |app| {
             let handle = app.handle().clone();
+
+            #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
+            {
+                app.deep_link().register_all()?;
+            }
+
+            if let Some(urls) = app.deep_link().get_current()? {
+                if let Some(url) = urls.into_iter().find(|url| url.scheme() == "kai") {
+                    let _ = capture_auth_callback(&handle, url.to_string());
+                }
+            }
+
+            let deep_link_handle = handle.clone();
+            app.deep_link().on_open_url(move |event| {
+                if let Some(url) = event.urls().iter().find(|url| url.scheme() == "kai") {
+                    let _ = capture_auth_callback(&deep_link_handle, url.to_string());
+                }
+            });
 
             app.handle().plugin(
                 tauri_plugin_global_shortcut::Builder::new()

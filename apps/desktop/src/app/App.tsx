@@ -4,6 +4,7 @@ import { initialKaiState } from "../data/mockData";
 import { CommandPalette } from "../features/command-center/CommandPalette";
 import { Dashboard } from "../features/dashboard/Dashboard";
 import {
+  completeAuthSession,
   fetchGoogleAuthStatus,
   fetchKaiAuthStatus,
   logoutKai,
@@ -12,9 +13,18 @@ import {
   startGoogleAuth,
   type EmailAuthPayload,
   type KaiAuthStatus,
+  type AuthCallbackPayload,
 } from "../lib/backend";
 import { executeCommand, parseCommand } from "../lib/commandEngine";
-import { bindSurfaceListener, centerKaiWindow, isTauriRuntime, setPaletteHeight, warmLocalParser } from "../lib/desktop";
+import {
+  bindAuthCallbackListener,
+  bindSurfaceListener,
+  centerKaiWindow,
+  consumeAuthCallbackUrl,
+  isTauriRuntime,
+  setPaletteHeight,
+  warmLocalParser,
+} from "../lib/desktop";
 import { loadNotes, loadQuickNote, saveNotes, saveQuickNote } from "../lib/persistence";
 import type { DesktopSurface, KaiState, NoteItem, PaletteResult, ViewMode } from "../lib/types";
 
@@ -45,6 +55,45 @@ const deriveNoteTitle = (body: string) => {
     .find(Boolean);
 
   return firstLine ? firstLine.slice(0, 48) : "Untitled Note";
+};
+
+const isKaiAuthCallbackUrl = (value: string) => {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "kai:" && parsed.hostname === "auth" && parsed.pathname === "/callback";
+  } catch {
+    return false;
+  }
+};
+
+const parseKaiAuthCallbackUrl = (value: string): AuthCallbackPayload | null => {
+  if (!isKaiAuthCallbackUrl(value)) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(value);
+    const hashParams = new URLSearchParams(parsed.hash.startsWith("#") ? parsed.hash.slice(1) : "");
+    const searchParams = parsed.searchParams;
+
+    return {
+      provider: searchParams.get("provider") ?? undefined,
+      flow_state: searchParams.get("flow_state") ?? undefined,
+      access_token: hashParams.get("access_token") || searchParams.get("access_token") || undefined,
+      refresh_token: hashParams.get("refresh_token") || searchParams.get("refresh_token") || undefined,
+      provider_token: hashParams.get("provider_token") || searchParams.get("provider_token") || undefined,
+      provider_refresh_token:
+        hashParams.get("provider_refresh_token") || searchParams.get("provider_refresh_token") || undefined,
+      token_type: hashParams.get("token_type") || searchParams.get("token_type") || undefined,
+      expires_in: Number(hashParams.get("expires_in") || searchParams.get("expires_in") || "0"),
+      type: hashParams.get("type") || searchParams.get("type") || undefined,
+      error: hashParams.get("error") || searchParams.get("error") || undefined,
+      error_description:
+        hashParams.get("error_description") || searchParams.get("error_description") || undefined,
+    };
+  } catch {
+    return null;
+  }
 };
 
 interface AuthGateProps {
@@ -175,6 +224,7 @@ export const App = () => {
     provider: "kai",
     status: "disconnected",
   });
+  const refreshAuthStatusRef = useRef<() => Promise<void>>(async () => undefined);
   const paletteRef = useRef<HTMLDivElement>(null);
 
   const sortedNotes = useMemo(
@@ -183,6 +233,54 @@ export const App = () => {
   );
   const selectedNote = sortedNotes.find((note) => note.id === selectedNoteId) ?? sortedNotes[0] ?? null;
   const isAuthenticated = authState.status === "connected";
+
+  const refreshAuthStatus = async () => {
+    const [kaiStatusResult, googleStatusResult] = await Promise.allSettled([
+      fetchKaiAuthStatus(),
+      fetchGoogleAuthStatus(),
+    ]);
+
+    if (kaiStatusResult.status === "fulfilled") {
+      setAuthState(kaiStatusResult.value);
+      setAuthError(null);
+    } else {
+      setAuthState({
+        provider: "kai",
+        status: "disconnected",
+      });
+      setAuthError(kaiStatusResult.reason instanceof Error ? kaiStatusResult.reason.message : "Kai auth is unavailable.");
+    }
+
+    if (googleStatusResult.status === "fulfilled") {
+      const status = googleStatusResult.value;
+      setState((current) => ({
+        ...current,
+        accounts: current.accounts.map((account) =>
+          account.provider === "google"
+            ? {
+                ...account,
+                email: status.email,
+                status: status.status,
+              }
+            : account,
+        ),
+      }));
+    } else {
+      setState((current) => ({
+        ...current,
+        accounts: current.accounts.map((account) =>
+          account.provider === "google"
+            ? {
+                ...account,
+                status: "disconnected",
+              }
+            : account,
+        ),
+      }));
+    }
+  };
+
+  refreshAuthStatusRef.current = refreshAuthStatus;
 
   const handleSubmit = () => {
     const sourceText = state.paletteQuery.trim();
@@ -308,6 +406,7 @@ export const App = () => {
       const nextAuthState = mode === "sign-in" ? await signInWithEmail(payload) : await signUpWithEmail(payload);
       setAuthState(nextAuthState);
       setState((current) => ({ ...current, activeView: "today" }));
+      await refreshAuthStatusRef.current();
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Kai sign-in failed.");
     } finally {
@@ -323,6 +422,7 @@ export const App = () => {
         status: "disconnected",
       });
       setAuthError(null);
+      await refreshAuthStatusRef.current();
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Kai sign-out failed.");
     }
@@ -463,75 +563,60 @@ export const App = () => {
   useEffect(() => {
     let cancelled = false;
 
-    const syncKaiAuthStatus = async () => {
-      try {
-        const status = await fetchKaiAuthStatus();
+    const handleDeepLink = async (url: string) => {
+      const payload = parseKaiAuthCallbackUrl(url);
+      if (!payload) {
+        return;
+      }
 
-        if (!cancelled) {
-          setAuthState(status);
-          setAuthError(null);
+      setAuthPending(true);
+      setAuthError(null);
+
+      try {
+        const nextAuthState = await completeAuthSession(payload);
+        if (cancelled) {
+          return;
         }
+
+        setAuthState(nextAuthState);
+        setState((current) => ({ ...current, activeView: "today" }));
+        await refreshAuthStatusRef.current();
       } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        setAuthError(error instanceof Error ? error.message : "Kai auth callback failed.");
+      } finally {
         if (!cancelled) {
-          setAuthState({
-            provider: "kai",
-            status: "disconnected",
-          });
-          setAuthError(error instanceof Error ? error.message : "Kai auth is unavailable.");
+          setAuthPending(false);
         }
       }
     };
 
-    const syncGoogleAuthStatus = async () => {
-      try {
-        const status = await fetchGoogleAuthStatus();
-
-        if (cancelled) {
-          return;
-        }
-
-        setState((current) => ({
-          ...current,
-          accounts: current.accounts.map((account) =>
-            account.provider === "google"
-              ? {
-                  ...account,
-                  email: status.email,
-                  status: status.status,
-                }
-              : account,
-          ),
-        }));
-      } catch {
-        if (cancelled) {
-          return;
-        }
-
-        setState((current) => ({
-          ...current,
-          accounts: current.accounts.map((account) =>
-            account.provider === "google"
-              ? {
-                  ...account,
-                  status: "disconnected",
-                }
-              : account,
-          ),
-        }));
+    void refreshAuthStatusRef.current().catch((error) => {
+      if (!cancelled) {
+        setAuthError(error instanceof Error ? error.message : "Kai auth is unavailable.");
       }
-    };
+    });
 
-    void syncKaiAuthStatus();
-    void syncGoogleAuthStatus();
+    let unlistenAuthCallback: (() => void) | undefined;
 
-    const interval = window.setInterval(() => {
-      void syncKaiAuthStatus();
-      void syncGoogleAuthStatus();
-    }, 5000);
+    void consumeAuthCallbackUrl().then((url) => {
+      if (url && !cancelled) {
+        void handleDeepLink(url);
+      }
+    });
+
+    void bindAuthCallbackListener((url) => {
+      void handleDeepLink(url);
+    }).then((unlisten) => {
+      unlistenAuthCallback = unlisten;
+    });
 
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      unlistenAuthCallback?.();
     };
   }, []);
 

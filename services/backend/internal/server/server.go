@@ -26,6 +26,7 @@ func New(cfg config.Config) http.Handler {
 		r.Get("/google/start", authHandler.GoogleStart())
 		r.Get("/google/callback", authHandler.GoogleCallback())
 		r.Post("/google/session", authHandler.GoogleFinalize())
+		r.Post("/session", authHandler.FinalizeSession())
 		r.Get("/google/status", authHandler.GoogleStatus())
 		r.Get("/email/confirmed", authHandler.EmailConfirmed())
 		r.Post("/email/sign-up", authHandler.EmailSignUp())
