@@ -437,7 +437,19 @@ export const App = () => {
 
   const handleGoogleDisconnect = async () => {
     try {
-      await disconnectGoogle();
+      const status = await disconnectGoogle();
+      setState((current) => ({
+        ...current,
+        accounts: current.accounts.map((account) =>
+          account.provider === "google"
+            ? {
+                ...account,
+                email: undefined,
+                status: status.status,
+              }
+            : account,
+        ),
+      }));
       await refreshAuthStatusRef.current();
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Google disconnect failed.");

@@ -50,6 +50,9 @@ type authSession struct {
 	GoogleName             string
 	GoogleProviderToken    string
 	GoogleRefreshToken     string
+	GoogleTokenType        string
+	GoogleScopes           string
+	GoogleExpiresAt        time.Time
 	GoogleProviderIdentity string
 }
 
@@ -138,6 +141,16 @@ type connectedPlatformRecord struct {
 	ExternalEmail string `json:"external_email"`
 	ExternalName  string `json:"external_name"`
 	Status        string `json:"status"`
+}
+
+type providerTokenRecord struct {
+	UserID       string     `json:"user_id"`
+	Provider     string     `json:"provider"`
+	AccessToken  string     `json:"access_token"`
+	RefreshToken string     `json:"refresh_token"`
+	TokenType    string     `json:"token_type"`
+	Scopes       string     `json:"scopes"`
+	ExpiresAt    *time.Time `json:"expires_at"`
 }
 
 type googleTokenResponse struct {
@@ -307,6 +320,9 @@ func (h *AuthHandler) GoogleConnectCallback() http.HandlerFunc {
 			h.session.GoogleName = firstNonEmpty(userInfo.Name, h.session.Name)
 			h.session.GoogleProviderToken = token.AccessToken
 			h.session.GoogleRefreshToken = firstNonEmpty(token.RefreshToken, h.session.GoogleRefreshToken)
+			h.session.GoogleTokenType = token.TokenType
+			h.session.GoogleScopes = strings.Join(h.cfg.Google.Scopes, ",")
+			h.session.GoogleExpiresAt = time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)
 			h.session.GoogleProviderIdentity = "google"
 		}
 		h.pendingFlow = nil
@@ -324,6 +340,11 @@ func (h *AuthHandler) GoogleConnectCallback() http.HandlerFunc {
 			firstNonEmpty(userInfo.Email, currentSession.Email),
 			firstNonEmpty(userInfo.Name, currentSession.Name),
 		); err != nil {
+			writeOAuthHTML(w, "Google connection failed", oauthRedirectBodyHTML("google", "connect", "error", err.Error()))
+			return
+		}
+
+		if err := h.upsertProviderToken(currentSession.UserID, "google", token.AccessToken, firstNonEmpty(token.RefreshToken, currentSession.GoogleRefreshToken), token.TokenType, strings.Join(h.cfg.Google.Scopes, ","), time.Now().Add(time.Duration(token.ExpiresIn)*time.Second)); err != nil {
 			writeOAuthHTML(w, "Google connection failed", oauthRedirectBodyHTML("google", "connect", "error", err.Error()))
 			return
 		}
@@ -375,9 +396,15 @@ func (h *AuthHandler) GoogleStatus() http.HandlerFunc {
 
 func (h *AuthHandler) GoogleDisconnect() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		h.mu.Lock()
-		session := h.session
-		h.mu.Unlock()
+		session, err := h.ensureSessionFresh()
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, authStatusResponse{
+				Provider: "google",
+				Status:   "error",
+				Message:  err.Error(),
+			})
+			return
+		}
 
 		if session == nil || !session.GoogleConnected {
 			writeJSON(w, http.StatusOK, authStatusResponse{
@@ -394,12 +421,30 @@ func (h *AuthHandler) GoogleDisconnect() http.HandlerFunc {
 			h.session.GoogleName = ""
 			h.session.GoogleProviderToken = ""
 			h.session.GoogleRefreshToken = ""
+			h.session.GoogleTokenType = ""
+			h.session.GoogleScopes = ""
+			h.session.GoogleExpiresAt = time.Time{}
 			h.session.GoogleProviderIdentity = ""
 		}
 		h.mu.Unlock()
 
 		if session.UserID != "" {
-			_ = h.deleteConnectedPlatform(session.UserID, "google")
+			if err := h.deleteConnectedPlatform(session.UserID, "google"); err != nil {
+				writeJSON(w, http.StatusBadGateway, authStatusResponse{
+					Provider: "google",
+					Status:   "error",
+					Message:  err.Error(),
+				})
+				return
+			}
+			if err := h.deleteProviderToken(session.UserID, "google"); err != nil {
+				writeJSON(w, http.StatusBadGateway, authStatusResponse{
+					Provider: "google",
+					Status:   "error",
+					Message:  err.Error(),
+				})
+				return
+			}
 		}
 
 		writeJSON(w, http.StatusOK, authStatusResponse{
@@ -851,7 +896,7 @@ func (h *AuthHandler) ensureSessionFresh() (*authSession, error) {
 	}
 
 	if session.ExpiresAt.IsZero() || time.Until(session.ExpiresAt) > time.Minute {
-		return session, nil
+		return h.ensureGoogleProviderFresh(session)
 	}
 
 	if session.RefreshToken == "" {
@@ -868,7 +913,7 @@ func (h *AuthHandler) ensureSessionFresh() (*authSession, error) {
 	updated := h.session
 	h.mu.Unlock()
 
-	return updated, nil
+	return h.ensureGoogleProviderFresh(updated)
 }
 
 func (h *AuthHandler) refreshSupabaseSession(session *authSession) (*authSession, error) {
@@ -903,11 +948,57 @@ func (h *AuthHandler) refreshSupabaseSession(session *authSession) (*authSession
 	refreshed.GoogleName = session.GoogleName
 	refreshed.GoogleProviderToken = session.GoogleProviderToken
 	refreshed.GoogleRefreshToken = session.GoogleRefreshToken
+	refreshed.GoogleTokenType = session.GoogleTokenType
+	refreshed.GoogleScopes = session.GoogleScopes
+	refreshed.GoogleExpiresAt = session.GoogleExpiresAt
 	refreshed.GoogleProviderIdentity = session.GoogleProviderIdentity
 	if err := h.hydrateConnectedPlatforms(refreshed); err != nil {
 		return nil, err
 	}
 	return refreshed, nil
+}
+
+func (h *AuthHandler) ensureGoogleProviderFresh(session *authSession) (*authSession, error) {
+	if session == nil || !session.GoogleConnected {
+		return session, nil
+	}
+
+	if session.GoogleRefreshToken == "" {
+		return session, nil
+	}
+
+	if session.GoogleExpiresAt.IsZero() || time.Until(session.GoogleExpiresAt) > time.Minute {
+		return session, nil
+	}
+
+	token, err := h.refreshGoogleProviderToken(session.GoogleRefreshToken)
+	if err != nil {
+		return nil, err
+	}
+
+	updated := *session
+	updated.GoogleProviderToken = token.AccessToken
+	updated.GoogleRefreshToken = firstNonEmpty(token.RefreshToken, session.GoogleRefreshToken)
+	updated.GoogleTokenType = firstNonEmpty(token.TokenType, session.GoogleTokenType)
+	updated.GoogleExpiresAt = time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)
+
+	if err := h.upsertProviderToken(
+		updated.UserID,
+		"google",
+		updated.GoogleProviderToken,
+		updated.GoogleRefreshToken,
+		updated.GoogleTokenType,
+		updated.GoogleScopes,
+		updated.GoogleExpiresAt,
+	); err != nil {
+		return nil, err
+	}
+
+	h.mu.Lock()
+	h.session = &updated
+	h.mu.Unlock()
+
+	return &updated, nil
 }
 
 func (h *AuthHandler) hydrateConnectedPlatforms(session *authSession) error {
@@ -928,6 +1019,21 @@ func (h *AuthHandler) hydrateConnectedPlatforms(session *authSession) error {
 		session.GoogleConnected = true
 		session.GoogleEmail = firstNonEmpty(record.ExternalEmail, session.GoogleEmail)
 		session.GoogleName = firstNonEmpty(record.ExternalName, session.GoogleName)
+	}
+
+	tokenRecord, err := h.fetchProviderToken(session.UserID, "google")
+	if err != nil {
+		return err
+	}
+
+	if tokenRecord != nil {
+		session.GoogleProviderToken = tokenRecord.AccessToken
+		session.GoogleRefreshToken = tokenRecord.RefreshToken
+		session.GoogleTokenType = tokenRecord.TokenType
+		session.GoogleScopes = tokenRecord.Scopes
+		if tokenRecord.ExpiresAt != nil {
+			session.GoogleExpiresAt = *tokenRecord.ExpiresAt
+		}
 	}
 
 	return nil
@@ -977,6 +1083,63 @@ func (h *AuthHandler) deleteConnectedPlatform(userID string, provider string) er
 	query.Set("provider", "eq."+provider)
 
 	return h.supabaseAdminJSONRequest(http.MethodDelete, "/connected_platforms", query, nil, nil)
+}
+
+func (h *AuthHandler) fetchProviderToken(userID string, provider string) (*providerTokenRecord, error) {
+	if userID == "" || provider == "" {
+		return nil, nil
+	}
+
+	var records []providerTokenRecord
+	query := url.Values{}
+	query.Set("user_id", "eq."+userID)
+	query.Set("provider", "eq."+provider)
+	query.Set("select", "user_id,provider,access_token,refresh_token,token_type,scopes,expires_at")
+
+	if err := h.supabaseAdminJSONRequest(http.MethodGet, "/provider_tokens", query, nil, &records); err != nil {
+		return nil, err
+	}
+
+	if len(records) == 0 {
+		return nil, nil
+	}
+
+	return &records[0], nil
+}
+
+func (h *AuthHandler) upsertProviderToken(userID string, provider string, accessToken string, refreshToken string, tokenType string, scopes string, expiresAt time.Time) error {
+	if userID == "" || provider == "" {
+		return nil
+	}
+
+	record := providerTokenRecord{
+		UserID:       userID,
+		Provider:     provider,
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		TokenType:    tokenType,
+		Scopes:       scopes,
+	}
+	if !expiresAt.IsZero() {
+		record.ExpiresAt = &expiresAt
+	}
+
+	query := url.Values{}
+	query.Set("on_conflict", "user_id,provider")
+
+	return h.supabaseAdminJSONRequest(http.MethodPost, "/provider_tokens", query, []providerTokenRecord{record}, nil)
+}
+
+func (h *AuthHandler) deleteProviderToken(userID string, provider string) error {
+	if userID == "" || provider == "" {
+		return nil
+	}
+
+	query := url.Values{}
+	query.Set("user_id", "eq."+userID)
+	query.Set("provider", "eq."+provider)
+
+	return h.supabaseAdminJSONRequest(http.MethodDelete, "/provider_tokens", query, nil, nil)
 }
 
 func (h *AuthHandler) fetchSupabaseUser(accessToken string) (*supabaseUser, error) {
@@ -1056,6 +1219,51 @@ func (h *AuthHandler) exchangeGoogleCode(code string) (*googleTokenResponse, err
 
 	if token.AccessToken == "" {
 		return nil, fmt.Errorf("google token exchange returned no access token")
+	}
+
+	return &token, nil
+}
+
+func (h *AuthHandler) refreshGoogleProviderToken(refreshToken string) (*googleTokenResponse, error) {
+	if strings.TrimSpace(refreshToken) == "" {
+		return nil, fmt.Errorf("google refresh token is missing")
+	}
+
+	payload := url.Values{}
+	payload.Set("client_id", h.cfg.Google.ClientID)
+	payload.Set("client_secret", h.cfg.Google.ClientSecret)
+	payload.Set("refresh_token", refreshToken)
+	payload.Set("grant_type", "refresh_token")
+
+	request, err := http.NewRequest(http.MethodPost, googleTokenURL, strings.NewReader(payload.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Google refresh request: %w", err)
+	}
+
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	response, err := h.client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reach Google token endpoint: %w", err)
+	}
+	defer response.Body.Close()
+
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read Google refresh response: %w", err)
+	}
+
+	if response.StatusCode >= http.StatusBadRequest {
+		return nil, fmt.Errorf("google token refresh failed with HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var token googleTokenResponse
+	if err := json.Unmarshal(body, &token); err != nil {
+		return nil, fmt.Errorf("failed to decode Google refresh response: %w", err)
+	}
+
+	if token.AccessToken == "" {
+		return nil, fmt.Errorf("google token refresh returned no access token")
 	}
 
 	return &token, nil

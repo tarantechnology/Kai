@@ -93,13 +93,30 @@ const formatUpdatedAt = (value: string) =>
     day: "numeric",
   });
 
+const deriveInitials = (name?: string) => {
+  const parts = (name ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+
+  if (parts.length === 0) {
+    return "K";
+  }
+
+  return parts.map((part) => part[0]?.toUpperCase() ?? "").join("");
+};
+
 const TodayView = ({
   tasks,
   events,
   quickNoteDraft,
   onQuickNoteDraftChange,
-}: Pick<DashboardProps, "tasks" | "events" | "quickNoteDraft" | "onQuickNoteDraftChange">) => {
+  authName,
+}: Pick<DashboardProps, "tasks" | "events" | "quickNoteDraft" | "onQuickNoteDraftChange" | "authName">) => {
   const notesRef = useRef<HTMLTextAreaElement>(null);
+  const displayName = authName?.trim() || "there";
+  const initials = deriveInitials(authName);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -114,10 +131,10 @@ const TodayView = ({
     <div className="view-grid today-layout">
       <section className="hero-block">
         <div>
-          <h1>Good afternoon, Derek</h1>
+          <h1>Good afternoon, {displayName}</h1>
           <p className="eyebrow">Thursday, March 27</p>
         </div>
-        <div className="avatar">DW</div>
+        <div className="avatar">{initials}</div>
       </section>
 
       <GlassPanel className="content-card today-task-card">
@@ -562,7 +579,7 @@ const SettingsView = ({
       </div>
       <GlassPanel className="content-card">
         <div className="settings-row profile">
-          <div className="avatar">DW</div>
+          <div className="avatar">{deriveInitials(authName)}</div>
           <div>
             <strong>{authName ?? "Kai user"}</strong>
             <p>{authEmail ?? authProviderLabel ?? "Signed in"}</p>
@@ -667,6 +684,7 @@ export const Dashboard = ({
           events={events}
           quickNoteDraft={quickNoteDraft}
           onQuickNoteDraftChange={onQuickNoteDraftChange}
+          authName={authName}
         />
       )}
       {activeView === "calendar" && <CalendarView events={events} assignments={assignments} />}

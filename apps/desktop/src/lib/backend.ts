@@ -66,7 +66,9 @@ export const startGoogleConnect = async () => {
 };
 
 export const fetchGoogleAuthStatus = async (): Promise<GoogleAuthStatus> => {
-  const response = await fetch(`${BACKEND_BASE_URL}/auth/google/status`);
+  const response = await fetch(`${BACKEND_BASE_URL}/auth/google/status`, {
+    cache: "no-store",
+  });
 
   if (!response.ok) {
     throw new Error(`Google auth status returned HTTP ${response.status}`);
@@ -76,7 +78,9 @@ export const fetchGoogleAuthStatus = async (): Promise<GoogleAuthStatus> => {
 };
 
 export const fetchKaiAuthStatus = async (): Promise<KaiAuthStatus> => {
-  const response = await fetch(`${BACKEND_BASE_URL}/auth/me`);
+  const response = await fetch(`${BACKEND_BASE_URL}/auth/me`, {
+    cache: "no-store",
+  });
 
   if (!response.ok) {
     throw new Error(`Kai auth status returned HTTP ${response.status}`);
@@ -109,7 +113,7 @@ export const signUpWithEmail = (payload: EmailAuthPayload) => postAuthJSON("/aut
 
 export const completeAuthSession = (payload: AuthCallbackPayload) => postAuthJSON("/auth/session", payload);
 
-export const disconnectGoogle = async (): Promise<void> => {
+export const disconnectGoogle = async (): Promise<GoogleAuthStatus> => {
   const response = await fetch(`${BACKEND_BASE_URL}/auth/google/disconnect`, {
     method: "POST",
   });
@@ -117,6 +121,8 @@ export const disconnectGoogle = async (): Promise<void> => {
   if (!response.ok) {
     throw new Error(`Google disconnect returned HTTP ${response.status}`);
   }
+
+  return (await response.json()) as GoogleAuthStatus;
 };
 
 export const logoutKai = async (): Promise<void> => {
