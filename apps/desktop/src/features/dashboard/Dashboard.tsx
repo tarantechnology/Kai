@@ -39,8 +39,11 @@ interface DashboardProps {
   onDeleteSelectedNote: () => void;
   onUpdateSelectedNote: (value: string) => void;
   sidebarCollapsed: boolean;
+  authName?: string;
+  authEmail?: string;
   onToggleSidebar: () => void;
   onStartGoogleAuth: () => void;
+  onLogout: () => void;
   onSelectView: (view: ViewMode) => void;
 }
 
@@ -539,8 +542,11 @@ const NotesView = ({
 const SettingsView = ({
   accounts,
   syncQueue,
+  authName,
+  authEmail,
   onStartGoogleAuth,
-}: Pick<DashboardProps, "accounts" | "syncQueue" | "onStartGoogleAuth">) => (
+  onLogout,
+}: Pick<DashboardProps, "accounts" | "syncQueue" | "authName" | "authEmail" | "onStartGoogleAuth" | "onLogout">) => (
   <div className="split-view">
     <section>
       <div className="section-heading">
@@ -551,10 +557,12 @@ const SettingsView = ({
         <div className="settings-row profile">
           <div className="avatar">DW</div>
           <div>
-            <strong>Derek Williams</strong>
-            <p>derik@example.com</p>
+            <strong>{authName ?? "Kai user"}</strong>
+            <p>{authEmail ?? "Signed in"}</p>
           </div>
-          <ChevronRight size={18} />
+          <button type="button" className="toolbar-pill toolbar-button" onClick={onLogout}>
+            Sign out
+          </button>
         </div>
         {accounts.map((account) => (
           <div key={account.id} className="settings-row">
@@ -625,8 +633,11 @@ export const Dashboard = ({
   onDeleteSelectedNote,
   onUpdateSelectedNote,
   sidebarCollapsed,
+  authName,
+  authEmail,
   onToggleSidebar,
   onStartGoogleAuth,
+  onLogout,
   onSelectView,
 }: DashboardProps) => (
   <GlassPanel className={`dashboard-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
@@ -657,7 +668,14 @@ export const Dashboard = ({
         />
       )}
       {activeView === "settings" && (
-        <SettingsView accounts={accounts} syncQueue={syncQueue} onStartGoogleAuth={onStartGoogleAuth} />
+        <SettingsView
+          accounts={accounts}
+          syncQueue={syncQueue}
+          authName={authName}
+          authEmail={authEmail}
+          onStartGoogleAuth={onStartGoogleAuth}
+          onLogout={onLogout}
+        />
       )}
     </main>
   </GlassPanel>

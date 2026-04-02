@@ -4,7 +4,22 @@ export interface GoogleAuthStatus {
   provider: "google";
   status: "connected" | "disconnected" | "error";
   email?: string;
+  name?: string;
   message?: string;
+}
+
+export interface KaiAuthStatus {
+  provider: "kai" | "google" | "email";
+  status: "connected" | "disconnected" | "error";
+  email?: string;
+  name?: string;
+  message?: string;
+}
+
+export interface EmailAuthPayload {
+  email: string;
+  password: string;
+  name?: string;
 }
 
 const BACKEND_BASE_URL = "http://127.0.0.1:8080";
@@ -29,4 +44,46 @@ export const fetchGoogleAuthStatus = async (): Promise<GoogleAuthStatus> => {
   }
 
   return (await response.json()) as GoogleAuthStatus;
+};
+
+export const fetchKaiAuthStatus = async (): Promise<KaiAuthStatus> => {
+  const response = await fetch(`${BACKEND_BASE_URL}/auth/me`);
+
+  if (!response.ok) {
+    throw new Error(`Kai auth status returned HTTP ${response.status}`);
+  }
+
+  return (await response.json()) as KaiAuthStatus;
+};
+
+const postAuthJSON = async (path: string, payload: EmailAuthPayload): Promise<KaiAuthStatus> => {
+  const response = await fetch(`${BACKEND_BASE_URL}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = (await response.json()) as KaiAuthStatus;
+
+  if (!response.ok || data.status === "error") {
+    throw new Error(data.message ?? `Kai auth request failed with HTTP ${response.status}`);
+  }
+
+  return data;
+};
+
+export const signInWithEmail = (payload: EmailAuthPayload) => postAuthJSON("/auth/email/sign-in", payload);
+
+export const signUpWithEmail = (payload: EmailAuthPayload) => postAuthJSON("/auth/email/sign-up", payload);
+
+export const logoutKai = async (): Promise<void> => {
+  const response = await fetch(`${BACKEND_BASE_URL}/auth/logout`, {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Kai logout returned HTTP ${response.status}`);
+  }
 };

@@ -1,8 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { GlassPanel } from "../components/GlassPanel";
+import { initialKaiState } from "../data/mockData";
 import { CommandPalette } from "../features/command-center/CommandPalette";
 import { Dashboard } from "../features/dashboard/Dashboard";
-import { initialKaiState } from "../data/mockData";
-import { fetchGoogleAuthStatus, startGoogleAuth } from "../lib/backend";
+import {
+  fetchGoogleAuthStatus,
+  fetchKaiAuthStatus,
+  logoutKai,
+  signInWithEmail,
+  signUpWithEmail,
+  startGoogleAuth,
+  type EmailAuthPayload,
+  type KaiAuthStatus,
+} from "../lib/backend";
 import { executeCommand, parseCommand } from "../lib/commandEngine";
 import { bindSurfaceListener, centerKaiWindow, isTauriRuntime, setPaletteHeight, warmLocalParser } from "../lib/desktop";
 import { loadNotes, loadQuickNote, saveNotes, saveQuickNote } from "../lib/persistence";
@@ -19,7 +29,6 @@ const PALETTE_MIN_EXPANDED_HEIGHT = 170;
 const PALETTE_MAX_HEIGHT = 520;
 
 const buildInitialNotes = (): NoteItem[] => {
-  // notes are loaded once from local storage, then app state becomes the live source of truth.
   const persisted = loadNotes();
 
   if (persisted.length > 0) {
@@ -30,7 +39,6 @@ const buildInitialNotes = (): NoteItem[] => {
 };
 
 const deriveNoteTitle = (body: string) => {
-  // notes use the first meaningful line as their title, similar to apple notes.
   const firstLine = body
     .split("\n")
     .map((line) => line.trim())
@@ -39,8 +47,116 @@ const deriveNoteTitle = (body: string) => {
   return firstLine ? firstLine.slice(0, 48) : "Untitled Note";
 };
 
+interface AuthGateProps {
+  pending: boolean;
+  error: string | null;
+  onGoogleSignIn: () => void;
+  onEmailSignIn: (payload: EmailAuthPayload) => Promise<void>;
+  onEmailSignUp: (payload: EmailAuthPayload) => Promise<void>;
+}
+
+const AuthGate = ({ pending, error, onGoogleSignIn, onEmailSignIn, onEmailSignUp }: AuthGateProps) => {
+  const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const payload: EmailAuthPayload = {
+      email,
+      password,
+      name,
+    };
+
+    void (mode === "sign-in" ? onEmailSignIn(payload) : onEmailSignUp(payload));
+  };
+
+  return (
+    <GlassPanel className="auth-shell">
+      <div className="auth-layout">
+        <section className="auth-hero">
+          <div className="auth-hero-copy">
+            <div className="auth-brand">
+              <div className="brand-mark" />
+              <span>Kai</span>
+            </div>
+            <div className="auth-copy">
+              <h1>Everything aligned before your day begins.</h1>
+              <p>Kai brings your reminders, notes, and connected calendars into one calm desktop workspace.</p>
+            </div>
+          </div>
+        </section>
+
+        <section className="auth-panel">
+          <div className="auth-panel-header">
+            <div className="auth-copy auth-copy-compact">
+              <h2>{mode === "sign-in" ? "Sign in" : "Create your account"}</h2>
+              <p>{mode === "sign-in" ? "Pick up where you left off." : "Start with Google or a Kai account."}</p>
+            </div>
+
+            <div className="toolbar-pill segmented-pill auth-mode-switcher">
+              <button type="button" className={mode === "sign-in" ? "is-active" : ""} onClick={() => setMode("sign-in")}>
+                Sign in
+              </button>
+              <button type="button" className={mode === "sign-up" ? "is-active" : ""} onClick={() => setMode("sign-up")}>
+                Create account
+              </button>
+            </div>
+          </div>
+
+          <button type="button" className="auth-google-button" onClick={onGoogleSignIn} disabled={pending}>
+            Continue with Google
+          </button>
+
+          <div className="auth-divider">
+            <span>or use email</span>
+          </div>
+
+          <form className="auth-form" onSubmit={handleSubmit}>
+            {mode === "sign-up" ? (
+              <label className="auth-field">
+                <span>Name</span>
+                <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" />
+              </label>
+            ) : null}
+
+            <label className="auth-field">
+              <span>Email</span>
+              <input
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="you@example.com"
+                autoComplete="email"
+              />
+            </label>
+
+            <label className="auth-field">
+              <span>Password</span>
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder={mode === "sign-in" ? "Your password" : "Create a password"}
+                autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
+              />
+            </label>
+
+            {error ? <p className="auth-error">{error}</p> : null}
+
+            <button type="submit" className="auth-submit-button" disabled={pending}>
+              {pending ? "Working..." : mode === "sign-in" ? "Sign in" : "Create account"}
+            </button>
+          </form>
+        </section>
+      </div>
+    </GlassPanel>
+  );
+};
+
 export const App = () => {
-  // this component is the top-level orchestrator for the desktop ui.
   const [state, setState] = useState<KaiState>(initialKaiState);
   const [surface, setSurface] = useState<DesktopSurface>("palette");
   const [browserVisible, setBrowserVisible] = useState(true);
@@ -48,15 +164,25 @@ export const App = () => {
   const [notes, setNotes] = useState<NoteItem[]>(() => buildInitialNotes());
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [authState, setAuthState] = useState<KaiAuthStatus>({
+    provider: "kai",
+    status: "disconnected",
+  });
+  const [authPending, setAuthPending] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const surfaceRef = useRef<DesktopSurface>("palette");
+  const authStateRef = useRef<KaiAuthStatus>({
+    provider: "kai",
+    status: "disconnected",
+  });
   const paletteRef = useRef<HTMLDivElement>(null);
 
   const sortedNotes = useMemo(
     () => [...notes].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     [notes],
   );
-  // the selected note falls back to the most recently updated note if no id is active.
   const selectedNote = sortedNotes.find((note) => note.id === selectedNoteId) ?? sortedNotes[0] ?? null;
+  const isAuthenticated = authState.status === "connected";
 
   const handleSubmit = () => {
     const sourceText = state.paletteQuery.trim();
@@ -67,7 +193,6 @@ export const App = () => {
 
     setState((current) => ({ ...current, paletteResult: loadingState }));
 
-    // command submission is always parse first, execute second.
     void parseCommand(sourceText)
       .then((parsed) => {
         setState((current) => {
@@ -83,8 +208,6 @@ export const App = () => {
           }
 
           const { nextState, result } = executeCommand(parsed.command, current);
-
-          // executeCommand is deterministic, so the model interprets but code still controls behavior.
           return {
             ...nextState,
             paletteResult: result,
@@ -177,17 +300,44 @@ export const App = () => {
     );
   };
 
+  const handleEmailAuth = async (payload: EmailAuthPayload, mode: "sign-in" | "sign-up") => {
+    setAuthPending(true);
+    setAuthError(null);
+
+    try {
+      const nextAuthState = mode === "sign-in" ? await signInWithEmail(payload) : await signUpWithEmail(payload);
+      setAuthState(nextAuthState);
+      setState((current) => ({ ...current, activeView: "today" }));
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Kai sign-in failed.");
+    } finally {
+      setAuthPending(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logoutKai();
+      setAuthState({
+        provider: "kai",
+        status: "disconnected",
+      });
+      setAuthError(null);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Kai sign-out failed.");
+    }
+  };
+
   useEffect(() => {
     let isMounted = true;
 
     const setupDesktop = async () => {
-      // rust emits surface changes, and react listens here so the correct screen renders.
       const unlisten = await bindSurfaceListener((nextSurface) => {
         if (!isMounted) {
           return;
         }
 
-        setSurface(nextSurface);
+        setSurface(authStateRef.current.status === "connected" ? nextSurface : "dashboard");
         setBrowserVisible(true);
       });
 
@@ -201,7 +351,6 @@ export const App = () => {
     });
 
     if (!isTauriRuntime()) {
-      // browser shortcuts only exist as a local dev fallback.
       const handleKeydown = (event: KeyboardEvent) => {
         if (!(event.metaKey || event.ctrlKey)) {
           return;
@@ -209,8 +358,8 @@ export const App = () => {
 
         if (event.key === "/") {
           event.preventDefault();
-          setSurface("palette");
-          setBrowserVisible((current) => !current || surfaceRef.current !== "palette");
+          setSurface(authStateRef.current.status === "connected" ? "palette" : "dashboard");
+          setBrowserVisible((current) => !current || surfaceRef.current !== "dashboard");
         }
 
         if (event.shiftKey && event.key === ":") {
@@ -244,12 +393,18 @@ export const App = () => {
   }, [surface]);
 
   useEffect(() => {
-    // quick capture notes are persisted separately from the full notes list.
+    authStateRef.current = authState;
+
+    if (authState.status !== "connected" && surface === "palette") {
+      setSurface("dashboard");
+    }
+  }, [authState, surface]);
+
+  useEffect(() => {
     saveQuickNote(quickNoteDraft);
   }, [quickNoteDraft]);
 
   useEffect(() => {
-    // full notes are saved whenever the note list changes.
     saveNotes(notes);
   }, [notes]);
 
@@ -284,17 +439,15 @@ export const App = () => {
       return;
     }
 
-    // warming the local parser avoids the first-command cold start when ollama is used.
     void warmLocalParser().catch(() => undefined);
   }, []);
 
   useEffect(() => {
-    if (surface !== "palette" || !isTauriRuntime()) {
+    if (surface !== "palette" || !isTauriRuntime() || !isAuthenticated) {
       return;
     }
 
     window.requestAnimationFrame(() => {
-      // the palette window resizes to match its rendered content instead of using one fixed height.
       const measuredHeight =
         state.paletteResult.mode === "idle"
           ? PALETTE_COLLAPSED_HEIGHT
@@ -305,10 +458,29 @@ export const App = () => {
 
       void setPaletteHeight(measuredHeight);
     });
-  }, [surface, state.paletteResult]);
+  }, [isAuthenticated, surface, state.paletteResult]);
 
   useEffect(() => {
     let cancelled = false;
+
+    const syncKaiAuthStatus = async () => {
+      try {
+        const status = await fetchKaiAuthStatus();
+
+        if (!cancelled) {
+          setAuthState(status);
+          setAuthError(null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setAuthState({
+            provider: "kai",
+            status: "disconnected",
+          });
+          setAuthError(error instanceof Error ? error.message : "Kai auth is unavailable.");
+        }
+      }
+    };
 
     const syncGoogleAuthStatus = async () => {
       try {
@@ -349,8 +521,11 @@ export const App = () => {
       }
     };
 
+    void syncKaiAuthStatus();
     void syncGoogleAuthStatus();
+
     const interval = window.setInterval(() => {
+      void syncKaiAuthStatus();
       void syncGoogleAuthStatus();
     }, 5000);
 
@@ -380,7 +555,7 @@ export const App = () => {
 
   return (
     <div className={`app-shell surface-${surface}`}>
-      {surface === "palette" && (
+      {surface === "palette" && isAuthenticated ? (
         <CommandPalette
           ref={paletteRef}
           query={state.paletteQuery}
@@ -388,31 +563,44 @@ export const App = () => {
           onQueryChange={handleQueryChange}
           onSubmit={handleSubmit}
         />
-      )}
+      ) : null}
 
-      {surface === "dashboard" && (
-        <Dashboard
-          activeView={state.activeView}
-          tasks={state.tasks}
-          events={state.events}
-          assignments={state.assignments}
-          accounts={state.accounts}
-          syncQueue={state.syncQueue}
-          quickNoteDraft={quickNoteDraft}
-          onQuickNoteDraftChange={handleQuickNoteChange}
-          notes={sortedNotes}
-          selectedNoteId={selectedNote?.id ?? null}
-          selectedNoteBody={selectedNote?.body ?? ""}
-          onSelectNote={handleSelectNote}
-          onCreateNote={handleCreateNote}
-          onDeleteSelectedNote={handleDeleteSelectedNote}
-          onUpdateSelectedNote={handleUpdateSelectedNote}
-          sidebarCollapsed={sidebarCollapsed}
-          onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
-          onStartGoogleAuth={startGoogleAuth}
-          onSelectView={handleSelectView}
-        />
-      )}
+      {surface === "dashboard" || !isAuthenticated ? (
+        isAuthenticated ? (
+          <Dashboard
+            activeView={state.activeView}
+            tasks={state.tasks}
+            events={state.events}
+            assignments={state.assignments}
+            accounts={state.accounts}
+            syncQueue={state.syncQueue}
+            quickNoteDraft={quickNoteDraft}
+            onQuickNoteDraftChange={handleQuickNoteChange}
+            notes={sortedNotes}
+            selectedNoteId={selectedNote?.id ?? null}
+            selectedNoteBody={selectedNote?.body ?? ""}
+            onSelectNote={handleSelectNote}
+            onCreateNote={handleCreateNote}
+            onDeleteSelectedNote={handleDeleteSelectedNote}
+            onUpdateSelectedNote={handleUpdateSelectedNote}
+            sidebarCollapsed={sidebarCollapsed}
+            authName={authState.name}
+            authEmail={authState.email}
+            onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
+            onStartGoogleAuth={startGoogleAuth}
+            onLogout={handleLogout}
+            onSelectView={handleSelectView}
+          />
+        ) : (
+          <AuthGate
+            pending={authPending}
+            error={authError}
+            onGoogleSignIn={startGoogleAuth}
+            onEmailSignIn={(payload) => handleEmailAuth(payload, "sign-in")}
+            onEmailSignUp={(payload) => handleEmailAuth(payload, "sign-up")}
+          />
+        )
+      ) : null}
     </div>
   );
 };

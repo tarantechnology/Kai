@@ -2,33 +2,22 @@ package config
 
 import (
 	"bufio"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
 type Config struct {
-	Port   string
-	Google GoogleOAuthConfig
+	Port     string
+	Supabase SupabaseConfig
 }
 
-type GoogleOAuthConfig struct {
-	ClientID     string
-	ClientSecret string
-	RedirectURL  string
-	Scopes       []string
-}
-
-type googleSecretFile struct {
-	Installed *googleClientCredentials `json:"installed"`
-	Web       *googleClientCredentials `json:"web"`
-}
-
-type googleClientCredentials struct {
-	ClientID     string   `json:"client_id"`
-	ClientSecret string   `json:"client_secret"`
-	RedirectURIs []string `json:"redirect_uris"`
+type SupabaseConfig struct {
+	URL              string
+	AnonKey          string
+	ServiceRoleKey   string
+	RedirectURL      string
+	EmailRedirectURL string
 }
 
 func Load() Config {
@@ -39,36 +28,26 @@ func Load() Config {
 		port = "8080"
 	}
 
-	google := loadGoogleOAuthConfig()
+	supabase := loadSupabaseConfig()
 
 	return Config{
-		Port:   port,
-		Google: google,
+		Port:     port,
+		Supabase: supabase,
 	}
 }
 
-func loadGoogleOAuthConfig() GoogleOAuthConfig {
-	cfg := GoogleOAuthConfig{
-		ClientID:     strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")),
-		ClientSecret: strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")),
-		RedirectURL:  strings.TrimSpace(os.Getenv("GOOGLE_REDIRECT_URL")),
-		Scopes:       loadGoogleScopes(),
-	}
+func loadSupabaseConfig() SupabaseConfig {
+	redirectURL := strings.TrimSpace(os.Getenv("SUPABASE_REDIRECT_URL"))
 
-	secretFilePath := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET_FILE"))
-	if secretFilePath == "" {
-		secretFilePath = "kaiWebCreds.json"
-	}
+	emailRedirectURL := strings.TrimSpace(os.Getenv("SUPABASE_EMAIL_REDIRECT_URL"))
 
-	if cfg.ClientID == "" || cfg.ClientSecret == "" || cfg.RedirectURL == "" {
-		loadGoogleConfigFromFile(secretFilePath, &cfg)
+	return SupabaseConfig{
+		URL:              strings.TrimRight(strings.TrimSpace(os.Getenv("SUPABASE_URL")), "/"),
+		AnonKey:          strings.TrimSpace(os.Getenv("SUPABASE_ANON_KEY")),
+		ServiceRoleKey:   strings.TrimSpace(os.Getenv("SUPABASE_SERVICE_ROLE_KEY")),
+		RedirectURL:      redirectURL,
+		EmailRedirectURL: emailRedirectURL,
 	}
-
-	if cfg.RedirectURL == "" {
-		cfg.RedirectURL = "http://127.0.0.1:8080/auth/google/callback"
-	}
-
-	return cfg
 }
 
 func loadDotEnv() {
@@ -109,58 +88,5 @@ func loadDotEnv() {
 		}
 
 		return
-	}
-}
-
-func loadGoogleScopes() []string {
-	raw := strings.TrimSpace(os.Getenv("GOOGLE_SCOPES"))
-	if raw == "" {
-		return []string{
-			"openid",
-			"https://www.googleapis.com/auth/userinfo.email",
-			"https://www.googleapis.com/auth/userinfo.profile",
-			"https://www.googleapis.com/auth/calendar",
-		}
-	}
-
-	parts := strings.Split(raw, ",")
-	scopes := make([]string, 0, len(parts))
-	for _, part := range parts {
-		scope := strings.TrimSpace(part)
-		if scope != "" {
-			scopes = append(scopes, scope)
-		}
-	}
-
-	return scopes
-}
-
-func loadGoogleConfigFromFile(path string, cfg *GoogleOAuthConfig) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-
-	var parsed googleSecretFile
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		return
-	}
-
-	credentials := parsed.Installed
-	if credentials == nil {
-		credentials = parsed.Web
-	}
-	if credentials == nil {
-		return
-	}
-
-	if cfg.ClientID == "" {
-		cfg.ClientID = credentials.ClientID
-	}
-	if cfg.ClientSecret == "" {
-		cfg.ClientSecret = credentials.ClientSecret
-	}
-	if cfg.RedirectURL == "" && len(credentials.RedirectURIs) > 0 {
-		cfg.RedirectURL = credentials.RedirectURIs[0]
 	}
 }

@@ -19,12 +19,19 @@ func New(cfg config.Config) http.Handler {
 	router.Use(middleware.Recoverer)
 	router.Use(localCORS)
 
+	router.Get("/", authHandler.AuthLanding())
 	router.Get("/health", handlers.Health())
 
 	router.Route("/auth", func(r chi.Router) {
 		r.Get("/google/start", authHandler.GoogleStart())
 		r.Get("/google/callback", authHandler.GoogleCallback())
+		r.Post("/google/session", authHandler.GoogleFinalize())
 		r.Get("/google/status", authHandler.GoogleStatus())
+		r.Get("/email/confirmed", authHandler.EmailConfirmed())
+		r.Post("/email/sign-up", authHandler.EmailSignUp())
+		r.Post("/email/sign-in", authHandler.EmailSignIn())
+		r.Get("/me", authHandler.Me())
+		r.Post("/logout", authHandler.Logout())
 	})
 
 	return router
