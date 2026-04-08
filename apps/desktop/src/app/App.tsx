@@ -5,8 +5,11 @@ import { CommandPalette } from "../features/command-center/CommandPalette";
 import { Dashboard } from "../features/dashboard/Dashboard";
 import {
   completeAuthSession,
+  createGoogleCalendarEvent,
+  deleteGoogleCalendarEvent,
   disconnectGoogle,
   fetchGoogleAuthStatus,
+  fetchGoogleCalendarEvents,
   fetchKaiAuthStatus,
   logoutKai,
   signInWithEmail,
@@ -58,6 +61,9 @@ const deriveNoteTitle = (body: string) => {
 
   return firstLine ? firstLine.slice(0, 48) : "Untitled Note";
 };
+
+const sortCalendarEvents = (events: KaiState["events"]) =>
+  [...events].sort((left, right) => new Date(left.startAt).getTime() - new Date(right.startAt).getTime());
 
 const isKaiAuthCallbackUrl = (value: string) => {
   try {
@@ -276,6 +282,38 @@ export const App = () => {
             : account,
         ),
       }));
+
+      if (status.status === "connected") {
+        try {
+          const googleEvents = await fetchGoogleCalendarEvents();
+          setState((current) => ({
+            ...current,
+            events: sortCalendarEvents([
+              ...current.events.filter((event) => event.source !== "google"),
+              ...googleEvents,
+            ]),
+          }));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Google Calendar sync failed.";
+          setAuthError(message);
+          setState((current) => ({
+            ...current,
+            accounts: current.accounts.map((account) =>
+              account.provider === "google"
+                ? {
+                    ...account,
+                    status: "error",
+                  }
+                : account,
+            ),
+          }));
+        }
+      } else {
+        setState((current) => ({
+          ...current,
+          events: current.events.filter((event) => event.source !== "google"),
+        }));
+      }
     } else {
       setState((current) => ({
         ...current,
@@ -287,6 +325,7 @@ export const App = () => {
               }
             : account,
         ),
+        events: current.events.filter((event) => event.source !== "google"),
       }));
     }
   };
@@ -303,7 +342,74 @@ export const App = () => {
     setState((current) => ({ ...current, paletteResult: loadingState }));
 
     void parseCommand(sourceText)
-      .then((parsed) => {
+      .then(async (parsed) => {
+        if (parsed.command?.type === "sync_google_calendar") {
+          const googleAccount = state.accounts.find((account) => account.provider === "google");
+          if (googleAccount?.status !== "connected") {
+            setState((current) => ({
+              ...current,
+              paletteResult: {
+                mode: "error",
+                title: "Google Calendar not connected",
+                detail: "Connect Google in Settings before syncing calendar events.",
+              },
+            }));
+            return;
+          }
+
+          const events = await fetchGoogleCalendarEvents();
+          setState((current) => ({
+            ...current,
+            activeView: "calendar",
+            events: sortCalendarEvents([
+              ...current.events.filter((event) => event.source !== "google"),
+              ...events,
+            ]),
+            paletteResult: {
+              mode: "success",
+              title: "Google Calendar updated",
+              detail: `${events.length} events synced from Google Calendar.`,
+            },
+          }));
+          return;
+        }
+
+        if (parsed.command?.type === "create_event") {
+          const googleAccount = state.accounts.find((account) => account.provider === "google");
+          if (googleAccount?.status !== "connected") {
+            setState((current) => ({
+              ...current,
+              paletteResult: {
+                mode: "error",
+                title: "Google Calendar not connected",
+                detail: "Connect Google in Settings before creating calendar events.",
+              },
+            }));
+            return;
+          }
+
+          const event = await createGoogleCalendarEvent({
+            title: parsed.command.title,
+            startLabel: parsed.command.startLabel,
+            endLabel: parsed.command.endLabel,
+          });
+
+          setState((current) => ({
+            ...current,
+            activeView: "calendar",
+            events: sortCalendarEvents([
+              ...current.events.filter((existing) => existing.source !== "google" || (existing.externalId ?? existing.id) !== (event.externalId ?? event.id)),
+              event,
+            ]),
+            paletteResult: {
+              mode: "success",
+              title: "Event created",
+              detail: `${event.title} from ${event.startLabel} to ${event.endLabel}`,
+            },
+          }));
+          return;
+        }
+
         setState((current) => {
           if (!parsed.command) {
             return {
@@ -449,6 +555,7 @@ export const App = () => {
               }
             : account,
         ),
+        events: current.events.filter((event) => event.source !== "google"),
       }));
       await refreshAuthStatusRef.current();
     } catch (error) {
@@ -464,9 +571,25 @@ export const App = () => {
         status: "disconnected",
       });
       setAuthError(null);
+      setState((current) => ({
+        ...current,
+        events: current.events.filter((event) => event.source !== "google"),
+      }));
       await refreshAuthStatusRef.current();
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Kai sign-out failed.");
+    }
+  };
+
+  const handleDeleteCalendarEvent = async (eventId: string) => {
+    try {
+      await deleteGoogleCalendarEvent(eventId);
+      setState((current) => ({
+        ...current,
+        events: current.events.filter((event) => (event.externalId ?? event.id) !== eventId),
+      }));
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Google Calendar delete failed.");
     }
   };
 
@@ -747,6 +870,10 @@ export const App = () => {
             onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
             onConnectGoogle={handleGoogleConnect}
             onDisconnectGoogle={handleGoogleDisconnect}
+            onRefreshGoogleCalendar={() => {
+              void refreshAuthStatus();
+            }}
+            onDeleteCalendarEvent={handleDeleteCalendarEvent}
             onLogout={handleLogout}
             onSelectView={handleSelectView}
           />

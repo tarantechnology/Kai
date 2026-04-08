@@ -201,8 +201,6 @@ fn main() {
     // these are the global shortcuts that can open kai from anywhere on the machine.
     let palette_shortcut = Shortcut::new(Some(Modifiers::SUPER), Code::Slash);
     let dashboard_shortcut = Shortcut::new(Some(Modifiers::SUPER), Code::Semicolon);
-    let dashboard_shift_shortcut =
-        Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::Semicolon);
 
     tauri::Builder::default()
         .manage(ActiveSurface(Mutex::new(SurfaceKind::Palette)))
@@ -248,9 +246,7 @@ fn main() {
                         // shortcuts map to a surface, then toggle_surface handles window logic.
                         let target_surface = if shortcut == &palette_shortcut {
                             Some(SurfaceKind::Palette)
-                        } else if shortcut == &dashboard_shortcut
-                            || shortcut == &dashboard_shift_shortcut
-                        {
+                        } else if shortcut == &dashboard_shortcut {
                             Some(SurfaceKind::Dashboard)
                         } else {
                             None
@@ -265,7 +261,6 @@ fn main() {
 
             handle.global_shortcut().register(palette_shortcut)?;
             handle.global_shortcut().register(dashboard_shortcut)?;
-            handle.global_shortcut().register(dashboard_shift_shortcut)?;
 
             let window = app
                 .get_webview_window("main")

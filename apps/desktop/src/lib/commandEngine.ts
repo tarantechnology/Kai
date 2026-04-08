@@ -1,16 +1,20 @@
 import { isTauriRuntime } from "./desktop";
 import type { EventItem, KaiCommand, KaiState, LocalParserResponse, PaletteResult, TaskItem } from "./types";
 
-const EVENT_TIMES = [
-  "9:00 AM",
-  "10:00 AM",
-  "11:00 AM",
-  "12:00 PM",
-  "1:00 PM",
-  "2:00 PM",
-  "3:00 PM",
-  "4:00 PM",
-];
+const buildTodayDateTime = (label: string) => {
+  const now = new Date();
+  const [time, meridiem] = label.split(" ");
+  const [rawHour, rawMinute] = time.split(":");
+  let hour = Number(rawHour) % 12;
+  const minute = Number(rawMinute);
+  if (meridiem === "PM") {
+    hour += 12;
+  }
+
+  const next = new Date(now);
+  next.setHours(hour, minute, 0, 0);
+  return next.toISOString();
+};
 
 const titleCase = (value: string) =>
   value
@@ -216,6 +220,8 @@ export const parseCommand = async (sourceText: string): Promise<LocalParserRespo
 const buildEvent = (title: string, startLabel: string, endLabel: string): EventItem => ({
   id: `event-${crypto.randomUUID()}`,
   title,
+  startAt: buildTodayDateTime(startLabel),
+  endAt: buildTodayDateTime(endLabel),
   startLabel,
   endLabel,
   day: "Thu",
@@ -236,9 +242,7 @@ const buildTask = (title: string, dueLabel: string): TaskItem => ({
 });
 
 const sortEvents = (events: EventItem[]) =>
-  [...events].sort(
-    (left, right) => EVENT_TIMES.indexOf(left.startLabel) - EVENT_TIMES.indexOf(right.startLabel),
-  );
+  [...events].sort((left, right) => new Date(left.startAt).getTime() - new Date(right.startAt).getTime());
 
 export const executeCommand = (
   command: KaiCommand | null,

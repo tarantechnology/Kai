@@ -24,7 +24,10 @@ export interface TaskItem {
 
 export interface EventItem {
   id: string;
+  externalId?: string;
   title: string;
+  startAt: string;
+  endAt: string;
   startLabel: string;
   endLabel: string;
   day: "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";

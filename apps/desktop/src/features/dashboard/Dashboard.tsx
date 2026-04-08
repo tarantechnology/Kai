@@ -45,20 +45,13 @@ interface DashboardProps {
   onToggleSidebar: () => void;
   onConnectGoogle: () => void;
   onDisconnectGoogle: () => void;
+  onRefreshGoogleCalendar: () => void;
+  onDeleteCalendarEvent: (eventId: string) => void;
   onLogout: () => void;
   onSelectView: (view: ViewMode) => void;
 }
 
 const hours = ["8 AM", "9 AM", "10 AM", "11 AM", "12 PM", "1 PM", "2 PM", "3 PM", "4 PM", "5 PM", "6 PM"];
-const weekDays = [
-  { key: "Mon", label: "Mon", dateLabel: "25" },
-  { key: "Tue", label: "Tue", dateLabel: "26" },
-  { key: "Wed", label: "Wed", dateLabel: "27" },
-  { key: "Thu", label: "Thu", dateLabel: "28" },
-  { key: "Fri", label: "Fri", dateLabel: "29" },
-  { key: "Sat", label: "Sat", dateLabel: "30" },
-  { key: "Sun", label: "Sun", dateLabel: "31" },
-] as const;
 const CALENDAR_HOUR_HEIGHT = 56;
 const CALENDAR_START_MINUTES = 8 * 60;
 const WEEK_EVENT_PREVIEW_HEIGHT = 34;
@@ -70,21 +63,42 @@ const accentClass = {
   teal: "event-chip accent-teal",
 };
 
-const parseMinutes = (label: string) => {
-  const match = label.match(/^(\d{1,2}):(\d{2})\s(AM|PM)$/);
+const dayKeys = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+type DayKey = (typeof dayKeys)[number];
 
-  if (!match) {
-    return CALENDAR_START_MINUTES;
+const getDayKey = (value: Date): DayKey => {
+  const day = value.getDay();
+  return dayKeys[(day + 6) % 7];
+};
+
+const startOfWeek = (value: Date) => {
+  const next = new Date(value);
+  const day = next.getDay() || 7;
+  next.setDate(next.getDate() - day + 1);
+  next.setHours(0, 0, 0, 0);
+  return next;
+};
+
+const buildWeekDays = (anchor: Date) =>
+  dayKeys.map((key, index) => {
+    const date = new Date(anchor);
+    date.setDate(anchor.getDate() + index);
+    return {
+      key,
+      label: key,
+      dateLabel: String(date.getDate()),
+      isoDate: date.toISOString(),
+      date,
+    };
+  });
+
+const formatWeekRange = (week: ReturnType<typeof buildWeekDays>) => {
+  const first = week[0]?.date;
+  const last = week[6]?.date;
+  if (!first || !last) {
+    return "";
   }
-
-  let hour = Number(match[1]) % 12;
-  const minutes = Number(match[2]);
-
-  if (match[3] === "PM") {
-    hour += 12;
-  }
-
-  return hour * 60 + minutes;
+  return `Week of ${first.toLocaleDateString(undefined, { month: "short", day: "numeric" })} - ${last.toLocaleDateString(undefined, { day: "numeric" })}`;
 };
 
 const formatUpdatedAt = (value: string) =>
@@ -174,7 +188,7 @@ const TodayView = ({
           <span>Today</span>
         </div>
         {events
-          .filter((event) => event.day === "Thu")
+          .filter((event) => getDayKey(new Date(event.startAt)) === getDayKey(new Date()))
           .map((event) => (
             <div key={event.id} className="assignment-row featured-assignment-row calendar-event-row">
               <div>
@@ -191,34 +205,53 @@ const TodayView = ({
   );
 };
 
-const CalendarView = ({ events, assignments }: Pick<DashboardProps, "events" | "assignments">) => {
+const CalendarView = ({
+  events,
+  assignments,
+  onRefreshGoogleCalendar,
+  onDeleteCalendarEvent,
+}: Pick<DashboardProps, "events" | "assignments" | "onRefreshGoogleCalendar" | "onDeleteCalendarEvent">) => {
+  const currentWeek = useMemo(() => buildWeekDays(startOfWeek(new Date())), []);
+  const weekStart = currentWeek[0]!.date.getTime();
+  const weekEnd = new Date(currentWeek[6]!.date).setHours(23, 59, 59, 999);
+  const todayKey = getDayKey(new Date());
   const [calendarMode, setCalendarMode] = useState<"week" | "day">("week");
-  const [selectedDay, setSelectedDay] = useState<(typeof weekDays)[number]["key"]>("Thu");
+  const [selectedDay, setSelectedDay] = useState<DayKey>(todayKey);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
 
   const eventLayouts = useMemo(
     () =>
-      events.map((event) => {
-        const startMinutes = parseMinutes(event.startLabel);
-        const endMinutes = parseMinutes(event.endLabel);
-        const duration = Math.max(30, endMinutes - startMinutes);
-        const dayIndex = weekDays.findIndex((day) => day.key === event.day);
+      events
+        .filter((event) => {
+          const start = new Date(event.startAt).getTime();
+          return start >= weekStart && start <= weekEnd;
+        })
+        .map((event) => {
+          const startDate = new Date(event.startAt);
+          const endDate = new Date(event.endAt);
+          const startMinutes = startDate.getHours() * 60 + startDate.getMinutes();
+          const endMinutes = endDate.getHours() * 60 + endDate.getMinutes();
+          const duration = Math.max(30, endMinutes - startMinutes);
+          const dayKey = getDayKey(startDate);
+          const dayIndex = currentWeek.findIndex((day) => day.key === dayKey);
 
-        return {
-          ...event,
-          dayIndex: Math.max(dayIndex, 0),
-          top: ((startMinutes - CALENDAR_START_MINUTES) / 60) * CALENDAR_HOUR_HEIGHT,
-          height: (duration / 60) * CALENDAR_HOUR_HEIGHT,
-        };
-      }),
-    [events],
+          return {
+            ...event,
+            day: dayKey,
+            dateLabel: String(startDate.getDate()),
+            dayIndex: Math.max(dayIndex, 0),
+            top: ((startMinutes - CALENDAR_START_MINUTES) / 60) * CALENDAR_HOUR_HEIGHT,
+            height: (duration / 60) * CALENDAR_HOUR_HEIGHT,
+          };
+        }),
+    [currentWeek, events, weekEnd, weekStart],
   );
 
   const dayEvents = eventLayouts.filter((event) => event.day === selectedDay);
   const selectedEvent =
     eventLayouts.find((event) => event.id === selectedEventId) ??
     dayEvents[0] ??
-    eventLayouts.find((event) => event.day === "Thu") ??
+    eventLayouts.find((event) => event.day === todayKey) ??
     null;
 
   return (
@@ -226,7 +259,7 @@ const CalendarView = ({ events, assignments }: Pick<DashboardProps, "events" | "
       <div className="calendar-toolbar calendar-toolbar-native">
         <div>
           <h1>Calendar</h1>
-          <p>Week of March 25 - 31</p>
+          <p>{formatWeekRange(currentWeek)}</p>
         </div>
         <div className="toolbar-group">
           <div className="toolbar-pill segmented-pill">
@@ -237,8 +270,11 @@ const CalendarView = ({ events, assignments }: Pick<DashboardProps, "events" | "
               Day
             </button>
           </div>
-          <button type="button" className="toolbar-pill toolbar-button" onClick={() => setSelectedDay("Thu")}>
+          <button type="button" className="toolbar-pill toolbar-button" onClick={() => setSelectedDay(todayKey)}>
             Today
+          </button>
+          <button type="button" className="toolbar-pill toolbar-button" onClick={onRefreshGoogleCalendar}>
+            Refresh
           </button>
         </div>
       </div>
@@ -248,11 +284,11 @@ const CalendarView = ({ events, assignments }: Pick<DashboardProps, "events" | "
           {calendarMode === "week" ? (
             <div className="week-grid">
               <div className="week-grid-header week-grid-corner" />
-              {weekDays.map((day) => (
+              {currentWeek.map((day) => (
                 <button
                   key={day.key}
                   type="button"
-                  className={`week-grid-header week-grid-day-button ${selectedDay === day.key ? "is-selected" : ""} ${day.key === "Thu" ? "is-today" : ""}`}
+                  className={`week-grid-header week-grid-day-button ${selectedDay === day.key ? "is-selected" : ""} ${day.key === todayKey ? "is-today" : ""}`}
                   onClick={() => setSelectedDay(day.key)}
                 >
                   <span>{day.label}</span>
@@ -266,37 +302,37 @@ const CalendarView = ({ events, assignments }: Pick<DashboardProps, "events" | "
                 ))}
               </div>
 
-              {weekDays.map((day) => (
-                <div key={day.key} className={`calendar-day-column ${day.key === "Thu" ? "is-today" : ""} ${selectedDay === day.key ? "is-selected" : ""}`}>
+              {currentWeek.map((day) => (
+                <div key={day.key} className={`calendar-day-column ${day.key === todayKey ? "is-today" : ""} ${selectedDay === day.key ? "is-selected" : ""}`}>
                   {hours.map((hour) => (
                     <div key={hour} className="calendar-hour-cell" />
                   ))}
                   {eventLayouts
                     .filter((event) => event.day === day.key)
                     .map((event) => (
-                    <button
-                      key={event.id}
-                      type="button"
-                      className={accentClass[event.accent]}
-                      onClick={() => setSelectedEventId(event.id)}
-                      style={{
-                        top: `${event.top + 6}px`,
-                        height: `${WEEK_EVENT_PREVIEW_HEIGHT}px`,
-                        left: `${8 + event.track * 4}px`,
-                        right: `${8 + Math.max(0, 2 - event.track) * 4}px`,
-                      }}
-                    >
-                      <strong>{event.title}</strong>
-                    </button>
-                  ))}
+                      <button
+                        key={event.id}
+                        type="button"
+                        className={accentClass[event.accent]}
+                        onClick={() => setSelectedEventId(event.id)}
+                        style={{
+                          top: `${event.top + 6}px`,
+                          height: `${WEEK_EVENT_PREVIEW_HEIGHT}px`,
+                          left: `${8 + event.track * 4}px`,
+                          right: `${8 + Math.max(0, 2 - event.track) * 4}px`,
+                        }}
+                      >
+                        <strong>{event.title}</strong>
+                      </button>
+                    ))}
                 </div>
               ))}
             </div>
           ) : (
             <div className="day-grid">
               <div className="day-grid-header">
-                <strong>{weekDays.find((day) => day.key === selectedDay)?.label}</strong>
-                <span>{weekDays.find((day) => day.key === selectedDay)?.dateLabel}</span>
+                <strong>{currentWeek.find((day) => day.key === selectedDay)?.label}</strong>
+                <span>{currentWeek.find((day) => day.key === selectedDay)?.dateLabel}</span>
               </div>
               <div className="day-grid-body">
                 <div className="calendar-hours-column day-hours-column">
@@ -356,6 +392,15 @@ const CalendarView = ({ events, assignments }: Pick<DashboardProps, "events" | "
                 <p className="calendar-popover-description">
                   {selectedEvent.title} is scheduled on {selectedEvent.day} and remains visible in your weekly calendar.
                 </p>
+                {selectedEvent.source === "google" ? (
+                  <button
+                    type="button"
+                    className="toolbar-pill toolbar-button"
+                    onClick={() => onDeleteCalendarEvent(selectedEvent.externalId ?? selectedEvent.id)}
+                  >
+                    Remove event
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </GlassPanel>
@@ -366,7 +411,7 @@ const CalendarView = ({ events, assignments }: Pick<DashboardProps, "events" | "
               <span>{assignments.length + events.length} items</span>
             </div>
             <div className="calendar-sidebar-list">
-              {events.slice(0, 4).map((event) => (
+              {eventLayouts.slice(0, 4).map((event) => (
                 <div key={event.id} className="calendar-sidebar-row">
                   <div>
                     <strong>{event.title}</strong>
@@ -669,6 +714,8 @@ export const Dashboard = ({
   onToggleSidebar,
   onConnectGoogle,
   onDisconnectGoogle,
+  onRefreshGoogleCalendar,
+  onDeleteCalendarEvent,
   onLogout,
   onSelectView,
 }: DashboardProps) => (
@@ -687,7 +734,14 @@ export const Dashboard = ({
           authName={authName}
         />
       )}
-      {activeView === "calendar" && <CalendarView events={events} assignments={assignments} />}
+      {activeView === "calendar" && (
+        <CalendarView
+          events={events}
+          assignments={assignments}
+          onRefreshGoogleCalendar={onRefreshGoogleCalendar}
+          onDeleteCalendarEvent={onDeleteCalendarEvent}
+        />
+      )}
       {activeView === "tasks" && <TasksView tasks={tasks} syncQueue={syncQueue} />}
       {activeView === "notes" && (
         <NotesView

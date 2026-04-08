@@ -12,6 +12,7 @@ import (
 func New(cfg config.Config) http.Handler {
 	router := chi.NewRouter()
 	authHandler := handlers.NewAuthHandler(cfg)
+	calendarHandler := handlers.NewCalendarHandler(authHandler)
 
 	router.Use(middleware.RequestID)
 	router.Use(middleware.RealIP)
@@ -41,13 +42,19 @@ func New(cfg config.Config) http.Handler {
 		r.Post("/logout", authHandler.Logout())
 	})
 
+	router.Route("/calendar", func(r chi.Router) {
+		r.Get("/google/events", calendarHandler.ListGoogleEvents())
+		r.Post("/google/events", calendarHandler.CreateGoogleEvent())
+		r.Delete("/google/events/{eventID}", calendarHandler.DeleteGoogleEvent())
+	})
+
 	return router
 }
 
 func localCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 		if r.Method == http.MethodOptions {
