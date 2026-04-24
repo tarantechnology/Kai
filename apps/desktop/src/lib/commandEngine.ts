@@ -23,6 +23,8 @@ const titleCase = (value: string) =>
     .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
     .join(" ");
 
+const twoDigit = (value: string) => (value.length === 1 ? `0${value}` : value);
+
 type CommandRecord = Record<string, unknown>;
 
 const isRecord = (value: unknown): value is CommandRecord => typeof value === "object" && value !== null;
@@ -47,7 +49,7 @@ const parseNaturalTimeLabel = (sourceText: string) => {
   }
 
   const hour = Number(match[1]);
-  const minutes = (match[2] ?? "00").padStart(2, "0");
+  const minutes = twoDigit(match[2] ?? "00");
   const explicitMeridiem = match[3]?.toUpperCase();
 
   if (hour < 1 || hour > 12) {

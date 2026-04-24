@@ -6,7 +6,9 @@ use std::process::Command;
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, Size, WebviewWindow, WindowEvent};
+use tauri::{
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Size, WebviewWindow, WindowEvent,
+};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
@@ -127,6 +129,30 @@ async fn warm_ollama_model() -> Result<(), String> {
     parser::warm().await
 }
 
+fn center_window_before_show(
+    window: &WebviewWindow,
+    width: f64,
+    height: f64,
+) -> tauri::Result<()> {
+    let monitor = window
+        .primary_monitor()?
+        .or_else(|| window.current_monitor().ok().flatten());
+
+    if let Some(monitor) = monitor {
+        let work_area = monitor.work_area();
+        let scale_factor = monitor.scale_factor();
+        let physical_width = (width * scale_factor).round() as i32;
+        let physical_height = (height * scale_factor).round() as i32;
+        let x = work_area.position.x + ((work_area.size.width as i32 - physical_width) / 2);
+        let y = work_area.position.y + ((work_area.size.height as i32 - physical_height) / 2);
+
+        window.set_position(PhysicalPosition::new(x, y))?;
+        return Ok(());
+    }
+
+    window.center()
+}
+
 fn configure_window(window: &WebviewWindow, surface: SurfaceKind) -> tauri::Result<()> {
     // each surface has its own native size and behavior.
     let (width, height, always_on_top) = match surface {
@@ -139,8 +165,9 @@ fn configure_window(window: &WebviewWindow, surface: SurfaceKind) -> tauri::Resu
     window.set_maximizable(false)?;
     window.set_always_on_top(always_on_top)?;
     window.set_shadow(false)?;
+    center_window_before_show(window, width, height)?;
     window.show()?;
-    window.center()?;
+    center_window_before_show(window, width, height)?;
     window.set_focus()?;
 
     Ok(())
@@ -201,6 +228,10 @@ fn main() {
     // these are the global shortcuts that can open kai from anywhere on the machine.
     let palette_shortcut = Shortcut::new(Some(Modifiers::SUPER), Code::Slash);
     let dashboard_shortcut = Shortcut::new(Some(Modifiers::SUPER), Code::Semicolon);
+    let dashboard_shift_shortcut =
+        Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::Semicolon);
+    let dashboard_fallback_shortcut =
+        Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyK);
 
     tauri::Builder::default()
         .manage(ActiveSurface(Mutex::new(SurfaceKind::Palette)))
@@ -246,7 +277,10 @@ fn main() {
                         // shortcuts map to a surface, then toggle_surface handles window logic.
                         let target_surface = if shortcut == &palette_shortcut {
                             Some(SurfaceKind::Palette)
-                        } else if shortcut == &dashboard_shortcut {
+                        } else if shortcut == &dashboard_shortcut
+                            || shortcut == &dashboard_shift_shortcut
+                            || shortcut == &dashboard_fallback_shortcut
+                        {
                             Some(SurfaceKind::Dashboard)
                         } else {
                             None
@@ -261,11 +295,31 @@ fn main() {
 
             handle.global_shortcut().register(palette_shortcut)?;
             handle.global_shortcut().register(dashboard_shortcut)?;
+            handle.global_shortcut().register(dashboard_shift_shortcut)?;
+            handle.global_shortcut().register(dashboard_fallback_shortcut)?;
 
             let window = app
                 .get_webview_window("main")
                 .expect("main window should exist");
 
+            #[cfg(debug_assertions)]
+            {
+                configure_window(&window, SurfaceKind::Dashboard)?;
+                let active_surface = app.state::<ActiveSurface>();
+                let mut active_surface = active_surface
+                    .0
+                    .lock()
+                    .expect("active surface state poisoned");
+                *active_surface = SurfaceKind::Dashboard;
+                app.emit(
+                    "kai://surface",
+                    SurfacePayload {
+                        surface: "dashboard",
+                    },
+                )?;
+            }
+
+            #[cfg(not(debug_assertions))]
             window.hide()?;
 
             let window_for_close = window.clone();

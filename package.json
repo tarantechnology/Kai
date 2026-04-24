@@ -9,6 +9,6 @@
     "frontend:dev": "npm run dev --workspace apps/desktop",
     "frontend:build": "npm run build --workspace apps/desktop",
     "build": "npm run tauri:build --workspace apps/desktop",
-    "backend": "cd services/backend && go run ./cmd/api"
+    "backend": "cd services/backend && GOCACHE=\"$(cd ../.. && pwd)/.gocache\" go run ./cmd/api"
   }
 }

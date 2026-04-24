@@ -627,7 +627,7 @@ export const App = () => {
           setBrowserVisible((current) => !current || surfaceRef.current !== "dashboard");
         }
 
-        if (event.shiftKey && event.key === ":") {
+        if (event.code === "Semicolon") {
           event.preventDefault();
           setSurface("dashboard");
           setBrowserVisible((current) => !current || surfaceRef.current !== "dashboard");

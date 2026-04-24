@@ -20,6 +20,5 @@ Backend:
 
 ```bash
 cd services/backend
-go run ./cmd/api
+GOCACHE="$(cd ../.. && pwd)/.gocache" go run ./cmd/api
 ```
-
